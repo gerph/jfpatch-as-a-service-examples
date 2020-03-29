@@ -91,7 +91,7 @@ from websocket import create_connection
 
 def setup_parser():
     parser = argparse.ArgumentParser(usage="%s [<options>]" % (os.path.basename(sys.argv[0]),))
-    parser.add_argument('--source', type=str,
+    parser.add_argument('--source', type=str, required=True,
                         help="Source file to build")
     parser.add_argument('--server', type=str, default='jfpatch.riscos.online/ws',
                         help="Server to connect to (default: 'jfpatch.riscos.online/ws')")
