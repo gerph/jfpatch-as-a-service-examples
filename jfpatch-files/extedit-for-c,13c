@@ -1,0 +1,606 @@
+In   -
+Out  EE
+Type AOF
+Max  16k
+
+Pre
+ S_None=0:REM We're outside the states !
+ S_AwaitAck=1:REM Awaiting acknowledgement of EE
+ S_AwaitSaveAck=2:REM Awaiting a save ack
+ S_AwaitLoadAck=3:REM Awaiting a load ack (also 'middle' state)
+ S_AwaitESave=4:REM Awaiting an EditDataSave
+ S_AwaitLoad=5:REM Awaiting a DataLoad
+ S_SendReturn=8:REM Request from application to return data
+ S_SendAbort=9:REM Request from application to abort
+ TW_Morite=&808C4:REM Sent to task to kill it
+ TW_Input=&808C0:REM Sent to give keypresses to it
+ DataSaveAck=2:REM Save ok
+ DataLoad=3:REM Load this
+ DataLoadAck=4:REM Loaded ok
+ Ret_None=&1000:REM Result = Not returning yet (if returned is an error)
+ Ret_Updated=0:REM Result = 'updated'     (ok)
+ Ret_Unchanged=1:REM Result = 'unchanged' (ok)
+ Ret_Failed=2:REM Result = 'failed' ;-(   (error)
+ Ret_Killed=3:REM Result = 'killed' ;-(   (error)
+End Pre
+
+#Rem Off
+#Area "EECode" Code ReadOnly
+; *******************************************************************
+; Subroutine:   external_edit
+; Description:  Edit a file
+; Parameters:   r0-> filename to edit
+;               r1 = filetype (or -1 for none)
+;               r2-> edit name
+;               r3-> program name
+; Returns:      r0 = return code
+;                    0 = updated
+;                    1 = unchanged
+;                    2 = failed \_ these can be treated as
+;                    3 = killed /  pretty much identical
+; *******************************************************************
+>|external_edit|
+   MOV     ip,sp                         ; APCS
+   STMFD   (sp)!,{a1-a4,v1-v6,fp,ip,lr,pc}     ; Stack registers
+   SUB     fp,ip,#4                      ; points as saved pc
+   SUB     ip,sp,#1024*3                 ; we're going to need a big stack
+   CMP     ip,sl                         ; is it below stack limit
+   BLLT    |__rt_stkovf_split_small|
+   REM     "Filename : %$0"
+   REM     "Filetype : %&1"
+   REM     "Editname : %$2"
+   REM     "Program : %$3"
+   STR     r3,`parent                    ; store progname as 'parent'
+   STR     r2,`editname                  ; store editname
+   MOV     r7,r1                         ; r7 = type to edit as
+   STR     r0,`filename                  ; store the filename used
+   MOV     r1,r0                         ; r1-> filename
+   XSWI    "OS_File",20                  ; get the info for it
+   CMP     r0,#0                         ; was it 'not found' ?
+   BEQ     exit_failed                   ; if so, return as 'failed'
+; now the type stuff
+   CMN     r7,#1                         ; if -1, then we use the type given
+   MOVEQ   r7,r6                         ; edit filetype = real filetype
+   STR     r7,`filetype                  ; store filetype
+   STR     r6,`oldtype                   ; the original type (to restore)
+   XSWI    "OS_Byte",229,1,0             ; disable escape
+   STR     r1,`oldescape                 ; store the escape state
+$restart
+   LDR     r1,$`TASK                     ; the 'TASK' word
+   LDR     r2,`parent                    ; taskname = parent
+   REM     "Taskname = %$2"
+   XSWI    "XWimp_Initialise",200        ; initialise us as a task
+   MOVVS   r0,#0                         ; if error, task handle = 0
+   STR     r0,`taskhandle                ; store handle
+   MOV     r1,r0                         ; hang on to the handley thing
+; check taskwindow
+   SWI     "TaskWindow_TaskInfo"         ; are we in a task ?
+   CMP     r0,#0                         ; well?
+   MOVNE   r0,#1                         ; marks us as a taskwindow
+   CMP     r0,#0                         ; are we outside taskwindow ?
+   CMPEQ   r1,#0                         ; and did the init fail ?
+   BNE     $notatshellcli
+   SWI     "XWimp_CloseDown"             ; close us down
+   B       $restart
+$notatshellcli
+   STR     r0,`intaskwindow              ; mark it
+   REM     "Taskwindow: %r0"
+   BL      addfilter                     ; add our filter
+   REM     "Filter added"
+   BL      ee_initiate                   ; start the first ee
+   REM     "Initiated EE"
+   LDR     r0,`intaskwindow
+   CMP     r0,#0                         ; are we in taskwindow ?
+   BEQ     $notintw                      ; nope, so jump out
+   SWI     "OS_WriteS"                   ; write string
+   EQUZA   "Press R to return data, A to abort"
+   SWI     "OS_NewLine"
+$waitloop
+; check state
+   LDR     r0,`returnstate               ; read return state
+   CMP     r0,#Ret_None                  ; is it 'none' ?
+   BNE     taskend                       ; if not, exit
+; now check keys
+   XSWI    "XOS_Byte",&81,25,0           ; read a character (25cs)
+   CMP     r2,#255                       ; was it valid ?
+   BEQ     $waitloop                     ; nope, so try again
+
+   CMP     r1,#ASC("R")                  ; was it 'r' to return ?
+   CMPNE   r1,#ASC("r")
+   MOVEQ   r0,#S_SendReturn              ; let's return
+   STREQ   r0,`filterstate               ; store it as the state
+
+   CMP     r1,#ASC("A")                  ; was it 'a' to abort ?
+   CMPNE   r1,#ASC("a")
+   CMPNE   r1,#27                        ; or escape?
+   MOVEQ   r0,#S_SendAbort               ; let's abort
+   STREQ   r0,`filterstate               ; store it as the state
+
+   B       $waitloop                     ; go again
+
+; not in a taskwindow
+$notintw
+   REM     "Non-taskwindow poll"
+$pollloop
+; check state
+   LDR     r0,`returnstate               ; read return state
+   CMP     r0,#Ret_None                  ; is it 'none' ?
+   BNE     taskend                       ; if not, exit
+; now poll
+   ADR     r1,`blk                       ; address of our block
+   XSWI    "Wimp_Poll",0                 ; poll the wimp
+   ADR     link,$pollloop                ; where to return to
+   CMP     r0,#17                        ; is it usermessage?
+   CMPNE   r0,#18                        ; or usermessagerecorded?
+   LDREQ   r0,[r1,#16]                   ; read message type
+   CMPEQ   r0,#0                         ; is it 'quit' ?
+   MOVEQ   r0,#Ret_Killed                ; mark us as killed
+   STREQ   r0,`returnstate               ; store as returnstate
+   BEQ     taskend                       ; if so, end nicely
+   B       $pollloop                     ; jump back to poll again
+
+$`TASK
+   EQUS    "TASK"                        ; word 'task'
+
+>taskend
+   BL      removefilter                  ; remove the filter
+   LDR     r0,`taskhandle                ; read the taskhandle
+   CMP     r0,#0                         ; was it valid ?
+   SWINE   "Wimp_CloseDown"              ; yep, so shut us down
+   LDR     r1,`oldescape                 ; read old escape state
+   XSWI    "OS_Byte",229,,0              ; restore it
+   LDR     r0,`returnstate               ; read the return code
+   REM     "Exiting... code = %r0"
+   REM     ""
+   LDMDB   (fp),{v1-v6,fp,lr,pc}^        ; return
+
+.exit_failed
+   REM     "Returning: failed"
+   MOV     r0,#Ret_Failed                ; return 'failed' value
+   LDMDB   (fp),{v1-v6,fp,lr,pc}^        ; return
+
+.`oldescape
+   EQUD    0                             ; old escape state
+.`taskhandle
+   EQUD    0                             ; task handle, or 0 if 'inside' task
+.`realtaskhandle
+   EQUD    0                             ; real task handle
+.`intaskwindow
+   EQUD    0                             ; 1 if we're in a taskwindow
+
+>addfilter
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   MOV     r0,#Ret_None                  ; make sure we can do multiple ee's
+   STR     r0,`returnstate               ; store as return state
+   LADR    r0,`ee_msgs
+   XSWI    "XWimp_AddMessages"           ; add the messages we need
+   XSWI    "Wimp_ReadSysInfo",5          ; read task handle
+   STR     r0,`realtaskhandle            ; store real task handle
+   MOV     r3,r0                         ; r3 = task handle
+   LADR    r0,`filtername                ; filter name
+   BL      strdup                        ; copy it to the module area
+   STR     r0,`filtername_ptr            ; store it for later
+   LADR    r1,filter                     ; filter code
+   XSWI    "Filter_RegisterPostFilter",,,0,,0 ; install it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>removefilter
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   XSWI    "Wimp_ReadSysInfo",5          ; read task handle
+   MOV     r3,r0                         ; r3 = task handle
+   LDR     r0,`filtername_ptr            ; filter name pointer
+   CMP     r0,#0                         ; is it 0 ?
+   BEQ     $exit                         ; if so, we've already released
+   LADR    r1,filter
+   XSWI    "Filter_DeRegisterPostFilter",,,0,,0 ; remove
+   BL      release                       ; release the filtername block
+   MOV     r0,#0
+   STR     r0,`filtername_ptr            ; zero the name pointer
+$exit
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>ee_initiate
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   ADR     r5,`blk                       ; the block base
+   LDR     r0,`editname                  ; the name for the editor
+   BL      strlen                        ; find len to r1
+   ADD     r1,r1,#52+3+1                 ; 52 for base, 3 to align, 1 term
+   BIC     r1,r1,#3                      ; align
+   STR     r1,[r5,#0]                    ; store as block length
+   REM     "Block size=%r1"
+   LDR     r3,`ee_editrq
+   STR     r3,[r5,#16]                   ; store as message
+   ADD     r1,r5,#52                     ; r1-> block + 52
+   BL      strcpy                        ; copy edit name there
+   REM     "Initiating EE for %$1"
+   LDR     r0,`parent                    ; read -> parent name
+   ADD     r1,r5,#32                     ; r1-> block + 32
+   BL      strcpy                        ; copy parent name there
+   REM     "Parent=%$1"
+   LDR     r0,`filetype                  ; filetype
+   STR     r0,[r5,#20]                   ; store as datatype
+   SWI     "OS_ReadMonotonicTime"
+   BIC     r0,r0,#&FF000000              ; clear top bits
+   BIC     r0,r0,#&00FF0000              ; clear top-mid bits
+   STR     r0,[r5,#24]                   ; store as job handle
+   MOV     r0,#0                         ; just edit and return on save
+   STR     r0,[r5,#28]                   ; store as flags
+   STR     r0,[r5,#12]                   ; store as ourref
+   XSWI    "Wimp_SendMessage",18,^`blk,0 ; broadcast recorded
+; set new state
+   MOV     r0,#S_AwaitAck                ; awaiting 'ack' message
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+.`parent
+   EQUD    0
+.`editname
+   EQUD    0
+.`filename
+   EQUD    0
+.`filetype
+   EQUD    &FFF                          ; text file
+.`oldtype
+   EQUD    &FFF                          ; it's original type
+.`tempname
+   EQUZA   "<Wimp$Scrap>"
+
+; Messages we /need/ to receive to work properly
+.`ee_msgs
+   EQUD    2                             ; datasaveack (for returns)
+   EQUD    3                             ; dataload (for sends)
+   EQUD    4                             ; dataloadack (for returns)
+.`ee_editrq
+   EQUD    &45d80                        ; Message_EditRq
+.`ee_editack
+   EQUD    &45d81                        ; Message_EditAck
+.`ee_return
+   EQUD    &45d82                        ; Message_EditReturn
+.`ee_abort
+   EQUD    &45d83                        ; Message_EditAbort
+.`ee_datasave
+   EQUD    &45d84                        ; Message_EditDataSave
+; end of list
+   EQUD    0
+
+.`ee_jobhandle
+   EQUD    0                             ; the job handle
+.`ee_taskhandle
+   EQUD    0                             ; their task handle
+
+.`filtername_ptr
+   EQUD    0                             ; name pointer (for release)
+.`filterstate
+   EQUD    0                             ; the state of the filter manager
+.`returnstate
+   EQUD    Ret_None                      ; the state we're returning
+.`filtername
+   EQUZA   "ExternalEdit filter"
+
+.`blk
+   RES     256                           ; just a few bytes
+
+; abort the edit
+>ee_abort
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "Sending abort message"
+   ADR     r5,`blk                       ; our workspace
+   MOV     r0,#28                        ; length of message
+   STR     r0,[r5,#0]                    ; store len
+   MOV     r0,#0
+   STR     r0,[r5,#20]                   ; store 0 value
+   LDR     r0,`ee_jobhandle
+   STR     r0,[r5,#24]                   ; store job handle
+   LDR     r0,`ee_abort                  ; edit abort
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",17,r5      ; send it
+; set new state
+   MOV     r0,#S_None                    ; we're not in any state
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; try to return the file to us
+>ee_return
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "Attempting get data back from Zap"
+   MOV     r5,r1                         ; r5-> block
+   LDR     r0,`filetype                  ; filetype
+   STR     r0,[r5,#20]                   ; store that
+   MOV     r0,#0                         ; not reply
+   STR     r0,[r5,#12]                   ; store as ourref
+   LDR     r0,`ee_jobhandle
+   STR     r0,[r5,#24]                   ; store job handle
+   LDR     r0,`ee_return                 ; return request
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",17,r5      ; send it
+; set new state
+   MOV     r0,#S_AwaitESave              ; awaiting 'editdatasave' message
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; try to send the file
+>ee_startsendfile
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "Attempting to send a file at Zap"
+   MOV     r5,r1                         ; r5-> block
+   LDR     r0,`editname                  ; the name to use
+   BL      strlen                        ; find it's len (to r1)
+   ADD     r2,r1,#44+3+1                 ; len+ base + align + term
+   BIC     r2,r2,#3                      ; align now!
+   STR     r2,[r5,#0]                    ; store as blk len
+   ADD     r1,r5,#44                     ; base
+   BL      strcpy                        ; copy leafname
+   LDR     r0,`filetype                  ; filetype
+   STR     r0,[r5,#40]                   ; store that
+   MOV     r0,#0                         ; unknown size
+   STR     r0,[r5,#36]                   ; store as size
+   STR     r0,[r5,#12]                   ; store as ourref
+   LDR     r0,`ee_jobhandle
+   STR     r0,[r5,#20]                   ; store job handle
+   LDR     r0,`ee_datasave               ; datasave request
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",18,r5      ; send it
+; set new state
+   MOV     r0,#S_AwaitSaveAck            ; awaiting 'ack' message
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; try to give them a file to save to (for return)
+>ee_sendsaveack
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   ADR     r1,`tempname                  ; the temporary name to use
+   XSWI    "XOS_File",6                  ; delete it
+   LDR     r5,[sp,#4*1]                  ; re-read r1
+   MOV     r0,r1                         ; r1
+   BL      strlen                        ; find it's len (to r1)
+   ADD     r2,r1,#44+3+1                 ; len+ base + align + term
+   BIC     r2,r2,#3                      ; align now!
+   STR     r2,[r5,#0]                    ; store as blk len
+   ADD     r1,r5,#44                     ; base
+   BL      strcpy                        ; copy leafname
+   REM     "Attempting to send save to Zap"
+   MVN     r0,#NOT -1                    ; not safe
+   STR     r0,[r5,#36]                   ; store as size
+   LDR     r0,`filetype                  ; filetype
+   STR     r0,[r5,#40]                   ; store as size
+   LDR     r0,[r5,#8]                    ; their ref
+   STR     r0,[r5,#12]                   ; store as ourref
+   MOV     r0,#DataSaveAck               ; datasave request
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",17,r5      ; send it
+; set new state
+   MOV     r0,#S_AwaitLoad               ; awaiting 'ack' message
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>ee_sendloadack
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   MOV     r5,r1                         ; r1-> workspace
+   ADD     r1,r5,#44                     ; pointer to filename
+   REM     "Attempting to copy file to original location"
+   LDR     r2,`filename                  ; -> filename
+   XSWI    "XOS_FSControl",26,,,%10000011
+   BVS     $failed                       ; argh.
+   MOV     r1,r2                         ; r1-> filename
+   LDR     r2,`oldtype                   ; read the original type
+   XSWI    "XOS_File",18
+   LDR     r0,[r5,#8]                    ; their ref
+   STR     r0,[r5,#12]                   ; store as ourref
+   MOV     r0,#DataLoadAck               ; dataload request
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",17,r5      ; send it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+$failed
+   REM     "LoadAck copy failed"
+   XBL     returnfromfilter,Ret_Failed   ; we failed to launch edit
+   XBL     ee_abort                      ; and send the abort
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; try to give them the file to load
+>ee_sendload
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   MOV     r5,r1                         ; r1-> workspace
+   ADD     r2,r5,#44                     ; pointer to filename
+   REM     "Attempting to send load to Zap"
+   LDR     r1,`filename                  ; read -> filename
+   XSWI    "XOS_FSControl",26,,,%11
+   BVS     $failed                       ; argh.
+   MOV     r0,#0                         ; unknown size
+   STR     r0,[r5,#36]                   ; store as size
+   LDR     r0,[r5,#8]                    ; their ref
+   STR     r0,[r5,#12]                   ; store as ourref
+   MOV     r0,#DataLoad                  ; dataload request
+   STR     r0,[r5,#16]                   ; store it
+   LDR     r2,`ee_taskhandle             ; their handle
+   XSWI    "Wimp_SendMessage",17,r5      ; send it
+; set new state
+   MOV     r0,#S_AwaitLoadAck            ; awaiting 'ack' message
+   STR     r0,`filterstate               ; store it
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+$failed
+   REM     "Load copy failed"
+   XBL     returnfromfilter,Ret_Failed   ; we failed to launch edit
+   XBL     ee_abort                      ; and send the abort
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; the filter to handle things
+>filter
+   STMFD   (sp)!,{r1-r5,link}            ; Stack registers
+   STR     r0,`reason                    ; hang on to reason
+   REM     "%c04%c30Filter: reason= %r0"
+   ADR     link,$return                  ; address to return to
+   CMP     r0,#0                         ; is it null ?
+   BEQ     null                          ; handle it
+   CMP     r0,#17                        ; is it usermessage ?
+   CMPNE   r0,#18                        ; or usermessagerecorded ?
+   BEQ     usermessage                   ; it's a usermessage
+   CMP     r0,#19                        ; is it usermessageack ?
+   BEQ     usermessageack
+$return
+   LDR     r0,`reason                    ; re-read reason
+   REM     "Returning reason %r0"
+   LDMFD   (sp)!,{r1-r5,pc}^             ; Return from call
+
+.`reason
+   EQUD    0                             ; reason for it all
+
+>null
+   STMFD   (sp)!,{r0,link}               ; Stack registers
+   LDR     r0,`filterstate               ; read state
+   CMP     r0,#S_SendReturn              ; we need to return
+   XBLEQ   ee_return                     ; send the 'editreturn'
+   CMP     r0,#S_SendAbort               ; we need to abort and return
+   XBLEQ   returnfromfilter,Ret_Unchanged ; the file wasn't changed
+   XBLEQ   ee_abort                      ; and send the abort
+   LDMFD   (sp)!,{r0,pc}                 ; Return from call
+
+>usermessageack
+   LDR     r2,[r1,#16]                   ; read message type
+
+   MOV     r4,link
+   REM     "ReceivedAck message %&2"
+   MOV     link,r4
+
+   LDR     r3,`ee_editrq                 ; EditRq bounced ?
+   CMP     r2,r3                         ; was that it ?
+   BEQ     um_editrq_bounced             ; ok, so deal with it
+   LDR     r3,`ee_datasave               ; EditDataSave bounced ?
+   CMP     r2,r3                         ; was that it ?
+   BEQ     um_editds_bounced             ; ok, so deal with it
+   MOV     pc,link
+
+>um_editrq_bounced
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "EditRq bounced"
+   LDR     r0,`filterstate               ; read the state
+   CMP     r0,#S_AwaitAck                ; are we waiting for ack ?
+   XBLEQ   returnfromfilter,Ret_Failed   ; with the code 'failed'
+   REM     "Back to Editrq_bounced"
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>um_editds_bounced
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "EDS bounced"
+   LDR     r0,`filterstate               ; read the state
+   CMP     r0,#S_AwaitSaveAck            ; are we waiting for saveack ?
+   XBLEQ   returnfromfilter,Ret_Failed   ; we've failed
+   XBLEQ   ee_abort                      ; and send the abort
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>usermessage
+   LDR     r2,[r1,#16]                   ; read message type
+
+   MOV     r4,link
+   REM     "Received message %&2"
+   MOV     link,r4
+
+   CMP     r2,#0                         ; is it 'quit' ?
+   LDRNE   r3,$`TW_Morite                ; have to read as a word
+   CMPNE   r2,r3                         ; or tw_morite ?
+   BEQ     um_quit                       ; we've been told to quit
+   LDR     r3,`ee_editack                ; EditAck
+   CMP     r2,r3                         ; was that it ?
+   BEQ     um_editack                    ; yeah, we got it !
+   LDR     r3,`ee_abort                  ; EditAbort
+   CMP     r2,r3                         ; was that it ?
+   BEQ     um_editabort                  ; yeah, we got it !
+   LDR     r3,`ee_datasave               ; EditDataSave
+   CMP     r2,r3                         ; was that it ?
+   BEQ     um_editds                     ; yeah, we got it !
+   CMP     r2,#DataSaveAck               ; is it DataSaveAck ?
+   BEQ     um_datasaveack                ; ooh, ok !
+   CMP     r2,#DataLoad                  ; is it DataLoad ?
+   BEQ     um_dataload                   ; hey, things returing !
+   MOV     pc,link
+
+$`TW_Morite
+   EQUD    TW_Morite
+
+>um_editds
+   STMFD   (sp)!,{link}                  ; Stack registers
+   ADD     r3,r1,#44
+   LDR     r4,[r1,#40]
+   REM     "Their filename was %$3, type=%&4"
+   LDR     r0,`filterstate               ; read filterstate
+   REM     "Received EditDataSave, state=%r0"
+   CMP     r0,#S_AwaitLoadAck            ; are we awaiting a save ? (middle)
+   CMPNE   r0,#S_AwaitESave              ; or explicitly awaiting one ?
+   LDMNEFD (sp)!,{pc}                    ; if not, return
+   BL      ee_sendsaveack                ; send a datasaveack at the task
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{pc}                    ; Return from call
+
+>um_editabort
+   STMFD   (sp)!,{r0,link}               ; Stack registers
+   XBL     returnfromfilter,Ret_Unchanged ; the file wasn't changed
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{r0,pc}                 ; Stack registers
+
+>um_datasaveack
+   STMFD   (sp)!,{link}                  ; Stack registers
+   LDR     r0,`filterstate               ; read filterstate
+   REM     "Received SaveAck, state=%r0"
+   CMP     r0,#S_AwaitSaveAck            ; are we awaiting a save ?
+   LDMNEFD (sp)!,{pc}                    ; if not, return
+   BL      ee_sendload                   ; send a dataload at the task
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{pc}                    ; Return from call
+
+>um_dataload
+   STMFD   (sp)!,{link}                  ; Stack registers
+   LDR     r0,`filterstate               ; read filterstate
+   REM     "Received Load, state=%r0"
+   CMP     r0,#S_AwaitLoad               ; are we awaiting a save ?
+   LDMNEFD (sp)!,{pc}                    ; if not, return
+   BL      ee_sendloadack                ; send a dataloadack at the task
+   XBL     returnfromfilter,Ret_Updated  ; the file WAS changed
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{pc}                    ; Return from call
+
+>um_editack
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDR     r0,`filterstate               ; read filterstate
+   REM     "Received Ack, state=%r0"
+   CMP     r0,#S_AwaitAck                ; are we awaiting an ack ?
+   LDMNEFD (sp)!,{r0-r5,pc}              ; if not, return
+   REM     "Storing handles and things"
+   LDR     r0,[r1,#24]                   ; read jobhandle
+   STR     r0,`ee_jobhandle              ; store it
+   LDR     r0,[r1,#4]                    ; read taskhandle
+   STR     r0,`ee_taskhandle             ; store it
+   BL      ee_startsendfile              ; send the file
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>um_quit
+   STMFD   (sp)!,{link}                  ; Stack registers
+   BL      ee_abort                      ; send an abort
+   BL      removefilter                  ; remove the filter
+   MVN     r0,#NOT -1                    ; don't pass on
+   STR     r0,`reason                    ; store as reason
+   LDMFD   (sp)!,{pc}                    ; Return from call
+
+; call this to return to main program
+>returnfromfilter
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   STR     r0,`returnstate               ; store the return state
+   REM     "Attempting to send 'done' message %r0"
+   LDMFD   (sp)!,{r0-r5,pc}^             ; Return from call
+
+#library "strings",strlen.strcpy
+#library "memory",strdup.release.claim
+#Here Libraries

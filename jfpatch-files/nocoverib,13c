@@ -1,0 +1,199 @@
+In    -
+Out   NoCoverIB
+Type  Module
+
+Define Module
+ Name    NoCoverIB
+ Author  Justin Fletcher
+ WimpSWIs
+  SWI    Wimp_OpenWindow
+  Pre    openwin
+ End WimpSWIs
+ Commands
+  Name   NoCoverIB
+  Help   ...
+         The NoCoverIB module forces the Wimp to obey the 'don't cover
+         iconbar' flag in CMOS RAM. If you wish to cover the iconbar,
+         then hold shift whilst performing any drags.|M|M
+         Note: The toggle has had to be simulated, and therefore it does
+         not work totally correctly. I cannot (legally) code around this
+         as I do not know the how to read previous size. Sorry about that.
+ End Commands
+ Workspace *160
+End Module
+
+Pre
+
+ LIBRARY "VersionBas":PROCinit_version
+ module_version$=version_major$
+ module_date$=version_date$
+
+ ibtop=128
+ REM # Cond Inline
+ REM # Cond ctrl Do you want Ctrl-Shift to cancel Shift action
+ # Cond Set ctrl TRUE
+End Pre
+
+#Rem Off
+; Replaces Wimp_OpenWindow
+.openwin
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "%c04Open window, number = %&1"
+   LDR     r3,[r12,#124]                 ; get flag
+   ADD     r3,r3,#1                      ; increment flag
+   STR     r3,[r12,#124]                 ; store back
+   CMP     r3,#1                         ; is it 0 ? (process)
+   BNE     $exit                         ; if not, exit
+   MOV     r5,r1                         ; r5=pointer to window block
+   XSWI    "OS_Byte",161,28              ; get CMOS byte
+   TST     r2,#&10                       ; is bit set ?
+   BEQ     $exit                         ; if not, exit
+   XSWI    "OS_Byte",121,0 EOR &80       ; get shift status
+   CMP     r1,#&FF                       ; is it pressed ?
+# Cond Of Ctrl
+   BNE     $notshift
+   XSWI    "OS_Byte",121,1 EOR &80       ; get ctrl status
+   CMP     r1,#&FF                       ; is it also pressed ?
+   BNE     $exit                         ; if not, exit
+# Cond Else
+   BEQ     $exit
+# Cond EndIf
+$notshift
+   REM     "Can process"
+
+   LDR     r2,[r5,#28]                   ; get window behind
+   CMN     r2,#3                         ; is it iconised ?
+   BEQ     $exit                         ; if so, exit
+   MOV     r1,r12                        ; r1=pointer to WS, and set b0
+   LDR     r2,[r5]                       ; get window handle
+   STR     r2,[r1]                       ; store in block
+   ORR     r1,r1,#1                      ; set b0
+   SWI     "Wimp_GetWindowInfo"          ; get data, bar icons
+   REM     "Got info"
+   LDR     r0,[r12,#32]                  ; get flags
+   STR     r0,[r12,#120]                 ; store flags for later
+   TST     r0,#1<<29                     ; has it got adjust size ?
+   TSTNE   r0,#1<<28                     ; if so, has it got vertical scroll?
+   BEQ     $exit                         ; if not, exit
+
+   TST     r0,#1<<16                     ; is it open ?
+   BNE     $notopen
+   MOV     r1,r5                         ; no, re-get pointer to block,
+   REM     "Call second routine"
+   SWI     "Wimp_OpenWindow"             ; Œ open it as specifed,
+   REM     "Exitted second"
+;    BL      Display
+   LDR     r4,[r5,#32]                   ; Œ read old offset 32
+   SWI     "Wimp_GetWindowState"         ; Œ get new location,
+   STR     r4,[r5,#32]                   ; Œ restore old offset 32
+;    BL      Display
+   ORR     r1,r12,#1                     ; Œ set b0 to return just header,
+   SWI     "Wimp_GetWindowInfo"          ; Œ and get the info again
+$notopen
+   ADD     r1,r12,#96                    ; add#96 as offset for outline blk
+   STR     r2,[r1]                       ; store window handle
+   SWI     "Wimp_GetWindowOutline"       ; get outline
+   LDR     r0,[r12,#8]                   ; get VWA bottom
+   LDR     r2,[r12,#96+8]                ; get bottom of window
+   SUB     r0,r0,r2                      ; r0=size of scroll bar
+   ADD     r4,r0,#ibtop                  ; add to iconbar top
+   LDR     r0,[r5,#28]                   ; get position in stack
+   CMN     r0,#2                         ; is it at back ?
+   BEQ     $exit
+   LDR     r0,[r5,#8]                    ; get bottom
+   LDR     r1,[r5,#16]                   ; get top
+   CMP     r1,r4                         ; is top below iconbar ?
+   BLT     $exit                         ; if so, then skip
+   CMP     r0,r4                         ; is bottom below iconbar ?
+   MOVLT   r0,r4                         ; if so, move it above iconbar
+   STR     r0,[r5,#8]                    ; and store back in block
+   BL      checktoggle
+   LDR     r0,[r12,#120]                 ; get original flags
+   TST     r0,#1<<21                     ; did it need forcing to screen ?
+   BNE     $forcetoscreen                ; if so, make sure
+   TST     r0,#1<<16                     ; was it open before ?
+   BNE     $exit                         ; if not, then forget
+   LDR     r0,[r12,#32]                  ; get flags
+   TST     r0,#1<<6                      ; is it no bounds ?
+   BNE     $exit
+$forcetoscreen
+   LDR     r3,[r12,#16]                  ; get win top
+   LDR     r2,[r12,#96+16]               ; get outline top
+   SUB     r4,r2,r3                      ; r4=title bar height
+   LDR     r3,[r5,#16]                   ; get new win top
+   BL      keeponscreen
+$exit
+   REM     "End filter"
+   LDR     r0,[r12,#124]                 ; get flag
+   SUB     r0,r0,#1                      ; decrement flag
+   STR     r0,[r12,#124]                 ; store back
+
+   LDMFD   (sp)!,{r0-r5,pc}^             ; Return from call
+
+.checktoggle
+   STMFD   (sp)!,{r0-r6,link}            ; Stack registers
+   REM     "Toggle check"
+   LDR     r0,[r12,#32]                  ; get flags
+   TST     r0,#1<<27                     ; toggle icon ?
+   BEQ     $exit                         ; if not, exit
+   TST     r0,#1<<18                     ; already full size ?
+   BNE     $exit                         ; if so, exit
+   REM     "%c04Toggle icon?"
+   SWI     "OS_Mouse"                    ; get position
+   TST     r2,#%101                      ; is select or adjust pressed ?
+   BEQ     $exit                         ; if not, then just passing over - exit
+   LDR     r2,[r12,#12]                  ; get win right
+   LDR     r3,[r12,#96+12]               ; get outline right
+   CMP     r2,r0                         ; compare win right with mousex
+   BGT     $exit                         ; if >, exit
+   CMP     r3,r0                         ; compare outline right with mousex
+   BLT     $exit                         ; if <, exit
+   LDR     r2,[r12,#16]                  ; get win top
+   LDR     r3,[r12,#96+16]               ; get outline top
+   CMP     r2,r1                         ; compare win top with mousey
+   BGT     $exit                         ; if >, exit
+   CMP     r3,r1                         ; compare outline top with mousey
+   BLT     $exit                         ; if <, exit
+   REM     "Yes"
+   SUB     r4,r3,r2                      ; r4=title bar height
+   LDR     r2,[r12,#56]                  ; get maxy
+   LDR     r3,[r12,#48]                  ; get miny
+   SUB     r2,r2,r3                      ; r2=total height
+   LDR     r3,[r5,#8]                    ; get bottom of window
+   REM     "Bottom=%r3"
+   REM     "Total height=%r2"
+   ADD     r3,r3,r2                      ; add height
+   BL      keeponscreen
+$exit
+   LDMFD   (sp)!,{r0-r6,pc}              ; Return from call
+
+; > r3=win top
+;   r4=title bar height
+.keeponscreen
+   STMFD   (sp)!,{r0-r6,link}            ; Stack registers
+   REM     "Keep on screen, top=%r3, %r4"
+   XSWI    "OS_ReadModeVariable",-1,12   ; get YWindLimit
+   MOV     r6,r2                         ; r6=YWindLimit
+   XSWI    "OS_ReadModeVariable",-1,5    ; get YEigFactor
+   MOV     r6,r6,LSL r2                  ; shift YWindLimit by YEigFactor
+   ADD     r0,r3,r4                      ; what will be location of titlebar?
+   CMP     r0,r6                         ; > top of screen ?
+   SUBGT   r3,r6,r4                      ; if so, top=scrtop-title height
+   MOVGT   r0,#1                         ; get 1 pixel to add to top
+   ADDGT   r3,r3,r0,LSL r2               ; add pixel to make title at top
+   STR     r3,[r5,#16]                   ; store back in block
+   REM     "Top=%r3"
+$exit
+   LDMFD   (sp)!,{r0-r6,pc}              ; Return from call
+
+; .Display
+;    STMFD   (sp)!,{r0-r9,link}            ; Stack registers
+;    LDMIA   r5,{r0-r8}                    ; read block
+;    REM     "Display :"
+;    REM     "%R"
+;    LDMFD   (sp)!,{r0-r9,pc}              ; Return from call
+
+#Post
+REM #Run <CODE>
+REM *Filer_Run Resources:$.Apps.!Draw
+REM *Son

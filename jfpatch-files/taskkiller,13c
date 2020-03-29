@@ -1,0 +1,386 @@
+APP  : TaskKiller
+IN   : -
+OUT  : TaskKiller
+TYPE : Module
+
+{ Source code for Task Killer!
+
+  Risc OS 3.11 :
+   Press Right-Alt-Break to kill the current task
+  Risc OS 3.00 :
+   Press Right-Alt-Scroll-lock to kill the current task
+  On either :
+   Press Right-Alt-Escape to generate error
+   Press Right-Alt-Keypad * to start a command prompt
+
+  KILLING TASKS
+  =============
+  Use generate error first, this should exit most areas
+  Then if this doesn't work, killing should terminate the task
+  If you use either, then it is advised that you should reboot
+
+                  ****** EXTREME WARNING *******
+      DO NOT USE THIS IF THE DESKTOP IS FUNCTIONING NORMALLY!
+        What will happen is that tasks will die randomly.
+
+  COMMAND PROMPTS
+  ===============
+  This will bring up the standard * prompt from anywhere, except in the
+  desktop. Do not use any commands which may seriously affect the top level
+  application.
+
+  DISCLAIMER
+  ==========
+  The author accepts no responsibility for this modules activities, and does
+  not guarentee its suitablity for any specific purpose. The module may not
+  be copied without this source code file.
+
+  MAKING THIS CODE
+  ================
+  This code requires the !JFPatch pre-assembler to make the code. This is a
+  simple text-to-basic assembler which takes a text assembler file, makes a
+  basic program from it to assemble, assembles it and returns any errors.
+  Currently, it is under development and requires a lot of work before it
+  will be released in any form. As such, this file is mostly useless, but
+  must be distributed with the resultant module.
+
+Contact
+-------
+Any comments, queries, donations or bug reports can be sent to :
+
+Fidonet NetMail :  Justin Fletcher at Arcade (0181 655 4412) [2:254/27]
+E-Mail : Gerph@arcade.demon.co.uk
+
+Snail Mail :
+    Justin Fletcher
+    ”Galadriel•
+    17b Cromwell Road,
+    Weeting,
+    Brandon,
+    Suffolk.
+    IP27 0QT
+
+History
+-------
+Version 1.00 : Simple Alt-Escape function.
+               Written in BASIC.
+Version 1.02 : Converted to Patch code.
+               Added Alt-Break/Shift-Lock combination
+               Clears Escape disabled state
+Version 1.03 : Added Alt-Keypad * function
+               Release to Arcade.
+Version 1.04 : Added Conditional assembly of Wimp Command window
+               code.
+               Patch code coverted to Basic by JFPatch.
+               FiveStar Marketting release ?
+Version 1.05 : 18 Mar 1995
+               Corrected bugs caused by incorrect pathing of Basic file
+Version 1.06 : 08 Apr 1995
+               Added code to set svc within call back code
+               Now uses DelinkApplication to remove vectors
+}
+
+DEFINE MODULE
+  Name     : TaskKiller
+  Version  : 1.06
+  Date     : 08 Apr 1995
+  Author   : Justin Fletcher
+  Help     : TaskKiller
+  Init     : initcode%
+  Service  : srvcode%
+  Final    : finalcode%
+  Commands
+    Name   : TaskKiller
+    Help   : ...
+     The Task killer module will attempt to kill a task which has crashed.
+     When a task stops responding, use these keys, in order of priority :|M
+      1. Use Right-Alt and Escape to exit using error handler|M
+      2. Use Right-Alt and {k2$} to kill the task with a machette!|M|M
+      WARNING : Do NOT use these in a correctly functioning desktop|M|M
+     The Task killer module can also be used to initiate a command prompt
+     by Right-Alt-Keypad *.
+  End Commands
+END MODULE
+
+PRE
+ DIM message_buffer% 256
+ *| Set Risc OS Version number
+ *Set RO$Version 311
+ *RmEnsure UtilityModule 3.11 Set RO$Version 300
+ *RmEnsure UtilityModule 3.00 Set RO$Version 200
+ riscos$=FNsystemvar("RO$Version")
+ REM These numbers count from top left of keyboard to bottom right
+ REM ie Esc = 0, f1=1, f2=2, f3=3, .. f12=12, Print=13, ScrLock=14
+ REM    Break =14, ~=15, 1=16, 2=17,
+ REM    TAB   = 38, LCtrl = 58, LShift= 75, Caps= 92
+ REM
+ k1=&60:REM Right Alt key
+ IF riscos$="311" THENk2=&F :k2$="Break"
+ IF riscos$="300" THENk2=&E :k2$="Scroll-Lock"
+ k3=0  :REM Escape key
+ k4=36 :REM Keypad *
+ # COND INLINE
+ # COND enablewimp Do you want to assemble the wimp command prompt window
+ REM # COND SET enablewimp FALSE
+END PRE
+
+.initcode%
+    STMFD   (sp)!,{link}
+    BL      doclaim
+    LDMFD   (sp)!,{pc}
+:
+.srvcode%
+    MOV     pc,link     ; ie return immediately
+;    TEQ     R1,#&27    ; reset module
+;    MOVNE   pc,link
+:
+.doclaim
+    STMFD   (sp)!,{R0-R2,link}
+    MOV     link,#0
+    STR     link,doingnow
+    STR     link,key1pressed
+    STR     link,key2pressed
+    STR     link,key3pressed
+    STR     link,key4pressed
+    MOV     R0,#&10               ; vector &10 ?
+    ADR     R1,newvector%         ; to be processed at newvector%
+    BL      claimvector%
+    MOV     R0,#&0E
+    MOV     R1,#&0B
+    SWI     "XOS_Byte"            ; enable keypress vector
+    MOV     R0,#0
+    STRB    R0,[R12,#8]
+    LDMFD   (sp)!,{R0-R2,pc}
+
+.finalcode%
+    STMFD   (sp)!,{R0-R2,link}
+    MOV     R0,#&0D
+    MOV     R1,#&0B
+    SWI     "XOS_Byte"            ; disable keypress vector
+    LDR     R12,[R12,#0]
+    MOV     R0,#&10
+    ADR     R1,newvector%
+    BL      releasevector%
+    LDMFD   (sp)!,{R0-R2,pc}
+
+.claimvector%
+    STMFD   (sp)!,{R2,link}
+    BL      releasevector%
+    MOV     R2,#0
+    SWI     "XOS_Claim"
+    LDMFD   (sp)!,{R2,pc}^
+
+.releasevector%
+    STMFD   (sp)!,{R0-R2,link}
+.retryrelease%
+    LDMFD   sp,{R0,R1}
+    MOV     R2,#0
+    SWI     "XOS_Release"
+    BVC     retryrelease%
+    CMP     pc,#0
+    LDMFD   (sp)!,{R0-R2,pc}
+
+.newvector%
+    CMP     R0,#&0B                ; is this a keypress ?
+    MOVNE   pc,link                 ; if not exit
+    STMFD   (sp)!,{R0-r2,R4,R5,link} ; stack regs
+    MOV     r4,#0
+    CMP     R2,#k1                 ; code for key 1 (controlling key)
+    STREQ   R1,key1pressed
+    MOVEQ   r4,#1
+    BEQ     whichkeys%
+    CMP     R2,#k2                 ; code for key 2 (Kill task)
+    STREQ   R1,key2pressed
+    MOVEQ   r4,#1
+    CMP     R2,#k3                 ; code for key 3 (Error)
+    STREQ   R1,key3pressed
+    MOVEQ   r4,#1
+    CMP     R2,#k4                 ; code for key 4 (OSCLI)
+    STREQ   R1,key4pressed
+    MOVEQ   r4,#1
+    CMP     r4,#1
+    LDMNEFD (sp)!,{R0-R2,R4,R5,pc}
+:
+.whichkeys%
+    LDR     R2,key1pressed
+    TEQ     R2,#0
+    LDMEQFD (sp)!,{R0-R2,R4,R5,pc}
+    LDR     R2,key2pressed
+    TEQ     R2,#0
+    BEQ     testforkey3
+    ADR     r1,doexitcode%         ; r1=address to jump to
+.setupjump
+    MOV     R5,pc
+    BIC     R4,R5,#1
+    TEQP    R4,#1
+    MOV     R0,R0
+    STMFD   (sp)!,{link}
+    LDRB    R0,doingnow
+    TEQ     R0,#0
+    BNE     alreadydoing
+    MOV     r0,r1                  ; r0=address
+    MOV     R1,#0
+    SWI     "XOS_AddCallBack"
+    MOVVC   R0,#1
+    STRVCB  R0,doingnow          ; if ok then set doing
+.alreadydoing
+    LDMFD   (sp)!,{link}
+    TEQP    R5,#0
+    MOV     R0,R0
+    LDMFD   (sp)!,{R0-R2,R4,R5,pc}
+.testforkey3                     ; check that key 3 is pressed (Error)
+    LDR     R2,key3pressed
+    TEQ     R2,#0
+    BEQ     testforkey4
+    ADR     r1,doerrorcode%
+    B       setupjump
+:
+.testforkey4                     ; check that key 4 is pressed (OSCLI)
+    LDR     R2,key4pressed
+    TEQ     R2,#0
+    LDMEQFD (sp)!,{R0-R2,R4,R5,pc}
+    ADR     r1,doosclicode%
+    B       setupjump
+:
+.doexitcode%
+    STMFD   (sp)!,{link}
+    BL      delinkapplication
+    BL      restorebreak
+    MOV     R0,#0
+    STRB    R0,doingnow
+; code goes here -
+;   SWI     "OS_EnterOS"
+    SWI     "OS_Exit"
+; - to here
+    LDMFD   (sp)!,{pc}
+:
+.doerrorcode%
+    STMFD   (sp)!,{link}
+    BL      delinkapplication
+    BL      restorebreak
+    MOV     R0,#0
+    STRB    R0,doingnow
+; code goes here -
+    ERR     "Program terminated"
+; - to here
+    LDMFD   (sp)!,{pc}
+:
+.delinkapplication
+    STMFD   (sp)!,{r0-r12,link}
+    FNset_as_svc(pass%)
+.dla_loop
+    ADR     r0,buffer               ; buffer for previously linked vectors ?
+    MOV     r1,#32                  ; length of buffer
+    SWI     "XOS_DelinkApplication" ; remove any vectors used by application
+    CMP     r1,#0                   ; was the buffer full ?
+    BEQ     dla_loop                ; if it was, then go around again
+    FNrestore_mode(pass%)
+    LDMFD   (sp)!,{r0-r12,pc}^
+.buffer
+    RES     32                      ; space for vector storage
+:
+:
+.doosclicode%
+    STMFD   (sp)!,{r0-r12,link}
+    FNset_as_svc(pass%)
+    BL      restorebreak
+; code goes here -
+    ADR     r0,wimpvar              ; address of wimp variable
+    ADR     r1,oscliline            ; address of buffer
+    MOV     r2,#255                 ; buffer length
+    MOV     r3,#0                   ; ?
+    MOV     r4,#3                   ; ?
+    SWI     "XOS_ReadVarVal"        ; read variable
+    BVS     exitoscli               ; exit if error
+    LDR     r0,[r1,#0]              ; get first word
+    LDR     r2,commandstring        ; read what it should be for comm
+    CMP     r0,r2                   ; compare
+    LDRNE   r0,[r1,#0]              ; get second word
+    LDRNE   r2,commandstring+4      ; read what it should be for ands
+    CMPNE   r0,r2                   ; compare
+    BNE     wimprunning
+.oscliloop
+    SWI     &100+ASC("*")
+    ADR     r0,oscliline        ; addr of buffer
+    MOV     r1,#&100            ; length of buffer
+    MOV     r2,#&20             ; min ascii accepted
+    MOV     r3,#&FF             ; max ascii accepted
+    SWI     "XOS_ReadLine"
+    BVS     osclierror          ; if error then process
+    CMP     r1,#0               ; if no characters typed then exit
+    BEQ     exitoscli
+    SWI     "XOS_CLI"           ; do command
+    BVC     oscliloop           ; if no error then loop around
+.osclierror
+    ADD     r0,r0,#4            ; skip error code byte
+    SWI     "OS_Write0"         ; write to screen
+    SWI     "OS_NewLine"
+    B       oscliloop
+.exitoscli
+    MOV     R0,#0
+    STRB    R0,doingnow
+; - to here
+    FNrestore_mode(pass%)
+    LDMFD   (sp)!,{r0-r12,pc}^
+:
+.wimprunning
+# COND OF enablewimp
+    ADR     r0,wimpcommand
+    SWI     "Wimp_StartTask"
+# COND END
+{ The above two commands will create a new task with the command GOS, and
+  therefore open a window in the middle of the desktop. This should
+  not be used as on exit it tends to crash applications.
+  Feel free to re-enable it, but the author accepts no responsibility and
+  will not support bugs in this manner (unless you know a solution!) }
+    B       exitoscli
+:
+.restorebreak
+    STMFD   (sp)!,{r8-r9,link}
+    FNset_as_svc(pass%)
+    MOV     r0,#200
+    MOV     r1,#0
+    SWI     "OS_Byte"            ; Clear Break/Escape disabled
+    MOV     r0,#229
+    MOV     r1,#0
+    SWI     "OS_Byte"            ; Enable Escape
+    FNrestore_mode(pass%)
+    LDMFD   (sp)!,{r8-r9,pc}
+:
+; variables
+.doingnow   :EQUD 0
+.key1pressed:EQUD 0
+.key2pressed:EQUD 0
+.key3pressed:EQUD 0
+.key4pressed:EQUD 0
+.oscliline
+    RES     256
+.wimpcommand:EQUS "GOS"+CHR$0:ALIGN
+.wimpvar    :EQUS "Wimp$State"+CHR$0:ALIGN
+.commandstring:EQUS "commands":ALIGN
+
+# POST
+# RUN <CODE>
+# END of main code
+:
+REM FNsystemvar : Return the contents of any string system var
+DEFFNsystemvar(Var$):LOCAL addr
+SYS "XOS_ReadVarVal",Var$,message_buffer%,255,0,3TO,,len
+message_buffer%?len=13
+=$message_buffer%
+:
+DEFFNset_as_svc(pass%)
+[OPT pass%
+     MOV     r9, pc          ; save current status/mode
+     ORR     r8, r9, #3      ; derive SVC-mode variation of it
+     TEQP    r8, #0          ; enter SVC mode
+     MOV     r0, r0          ; nop
+     MOV     r8, link        ; save r14_svc
+]:=pass%
+:
+DEFFNrestore_mode(pass%)
+[OPT pass%
+     MOV     link, r8        ; restore r14_svc
+     TEQP    r9, #0          ; re-enter original processor mode
+     MOVNV   r0, r0          ; nop
+]:=pass%

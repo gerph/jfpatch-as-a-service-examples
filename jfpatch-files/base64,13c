@@ -1,0 +1,76 @@
+In   -
+Out  Base64
+Type Module
+Ver  1.00a
+
+Define Module
+ Name      Base64
+ Author    Justin Fletcher
+ SWIs
+  Prefix   Base64
+  Base     &800
+  0        Encode         encode
+ End SWIs
+End Module
+
+; *******************************************************************
+; Subroutine:   encode
+; Description:  base64 encode a block of memory
+; Parameters:   r0-> block to encode
+;               r1 = block length
+;               r2-> result block
+; Returns:      r3 = result length
+; *******************************************************************
+>encode
+   STMFD   (sp)!,{r0-r2,r4-r9,link}      ; Stack registers
+   MOV     r9,#0                         ; total = 0
+   MOV     r8,#24-8                      ; shift = 24-8
+   ADR     r7,$lookup                    ; address of lookup table
+   CMP     r1,#0                         ; an anomaly - 0 length produces 0
+   BEQ     $done_no_output               ; so do nothing
+$loop
+   SUBS    r1,r1,#1                      ; decrement block length
+   BMI     $done                         ; and if < 0 we're done
+   LDRB    r4,[r0],#1                    ; read byte and increment ptr (val)
+   ADD     r9,r9,r4,LSL r8               ; total += (val << shift)
+$writeloop
+   CMP     r8,#24-6                      ; is it < 24-6 ?
+   MOVLT   r6,r9,LSR #24-6               ; if so, total >> (24-6)
+   ANDLT   r6,r6,#&3F                    ;        leave just bottom 6 bits
+   LDRLTB  r5,[r7,r6]                    ;        read translation
+   STRLTB  r5,[r2],#1                    ;        store in result and inc
+   MOVLT   r9,r9,LSL #6                  ;        shift total up 6
+   ADDLT   r8,r8,#6                      ;        add 6 to shift
+   CMPLT   r8,#24-6                      ;        is it /still/ < 24-6 ?
+   BLT     $writeloop                    ;        and check once more...
+   SUB     r8,r8,#8                      ; shift -= 8
+   B       $loop                         ; and process the last bits
+$done
+   REM     "Done, shift = %r8"
+; write the last byte
+   MOV     r6,r9,LSR #24-6               ; total >> (24-6)
+   AND     r6,r6,#&3F                    ; leave just bottom 6 bits
+   LDRB    r5,[r7,r6]                    ; read translation
+   STRB    r5,[r2],#1                    ; store in result and inc
+; now work out length
+   LDR     r3,[sp,#4*2]                  ; re-read r2
+   SUB     r3,r2,r3                      ; r3 = length created
+   SUB     r4,r3,#1                      ; work out /where it ends/
+   AND     r6,r4,#3                      ; leave just the bottom bits
+   RSBS    r6,r6,#3                      ; and work out the amount of padding
+   ADD     r3,r3,r6                      ; add to the 'total'
+   MOVNE   r5,#ASC("=")                  ; padding character
+$equals_loop
+   STRNEB  r5,[r2],#1                    ; store in result and inc
+   SUBNES  r6,r6,#1                      ; decrement pads needed
+   BNE     $equals_loop                  ; and try again
+   LDMFD   (sp)!,{r0-r2,r4-r9,pc}        ; Return from call
+$done_no_output
+   MOV     r3,#0                         ; output length = 0
+   LDMFD   (sp)!,{r0-r2,r4-r9,pc}        ; Return from call
+
+$lookup
+   EQUS    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+#Post
+#Run <CODE>

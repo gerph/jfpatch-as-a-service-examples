@@ -1,0 +1,171 @@
+In   -
+Out  Dial
+Type Utility
+Ver  1.00d
+
+#Rem Off
+#CodePrefix Off
+.dial
+   STMFD   (sp)!,{r0-r10,link}           ; Stack registers
+   LDRB    r0,[r1]                       ; read byte from CLI
+   CMP     r0,#32                        ; is it ' ' ?
+   ADRLT   r7,$`mynumber                 ; if <, use my number
+   MOVGE   r7,r1                         ; otherwise use their string
+   XSWI    "Sound_Configure",0,0,0,0,0   ; read number of voices
+   CMP     r0,#2                         ; is it <2 ?
+   XSWILT  "Sound_Configure",2           ; if < 2, reconfigure
+   MOVLT   r0,#2                         ; and ensure it stays 2
+   BL      findinsts                     ; find the instruments
+   REM     "Insts = %r8 %r9"
+   CMP     r9,#0                         ; did we find the second ?
+   BEQ     $nochannels                   ; help!
+; now play it
+   MOV     r1,#0                         ; current time point
+   MOV     r2,r7                         ; r2-> line to play
+   REM     "String was %$2"
+$nextone
+   LDRB    r0,[r2],#1                    ; read and inc
+   CMP     r0,#32                        ; is it <32 ?
+   BLT     $exit                         ; if so, exit
+   CMP     r0,#48                        ; is it >=48 ?
+   BLT     $nextone                      ; if not, next
+   CMP     r0,#57                        ; is to >57 ?
+   BGT     $notnumber                    ; if so, not a number
+   BL      playnotes                     ; play the notes
+   B       $nextone
+
+$notnumber
+   CMP     r0,#ASC("P")                  ; is it 'p' ?
+   ADDEQ   r1,r1,#200                    ; if so, bump period by 200
+   B       $nextone
+
+$exit
+   LDMFD   (sp)!,{r0-r10,pc}^            ; Return from call
+$nochannels
+   LDMFD   (sp)!,{r0-r10,link}           ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+
+$`error
+   EQUD    0
+   EQUS    "Need 2 "
+$`wavesynth
+   EQUZ    "WaveSynth-Beep"
+%`wavesynth=$`wavesynth:REM Global export
+
+$`mynumber
+; Not my phone number any more.
+   EQUZA   "01234 567890"
+
+; *******************************************************************
+; Subroutine:   findinsts
+; Description:  Find two WaveSynth-Beep voices
+; Parameters:   r0 = maximum number of voices at present
+; Returns:      r8 = voice 1
+;               r9 = voice 2
+; *******************************************************************
+>findinsts
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   REM     "Voices present %r0"
+   MOV     r8,#0                         ; no first yet
+   MOV     r9,#0                         ; no second yet
+   MOV     r4,#1                         ; current channel
+   MOV     r5,r0                         ; r5 = max number of chans
+$loop
+   XSWI    "XSound_AttachVoice",r4,0     ; read what's on there
+   CMP     r1,#0                         ; is it 0 (unused) ?
+   BEQ     $foundone                     ; if so, we've got one
+   XSWI    "XSound_InstallVoice",0       ; read the instrument name
+;    REM     "Channel %r4 has %$0"         ; return the name
+   ADR     r1,`wavesynth                 ; what we want
+   BL      cmpstringi                    ; are they the same ?
+   BNE     $nextone                      ; nope, so go again
+$foundone
+   XSWI    "XSound_AttachNamedVoice",r4,^`wavesynth ; ensure it is attached
+   CMP     r8,#0                         ; is r8 valid ?
+   MOVEQ   r8,r4                         ; if not, r8 = this channel
+   BEQ     $nextone                      ;         and get next one
+   CMP     r9,#0                         ; is r9 valid ?
+   MOVEQ   r9,r4                         ; if not, r9 = this channel
+   BEQ     $nextone                      ;         and get next one
+; otherwise we exit
+$exit
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+$nextone
+   ADD     r4,r4,#1                      ; inc voice number
+   CMP     r4,r5                         ; is it > voices ?
+   BLE     $loop                         ; if not, go for more
+   B       $exit
+
+; *******************************************************************
+; Subroutine:   playnotes
+; Description:  Play the notes needed
+; Parameters:   r0 = number (ASCII)
+;               r1 = time period to play at
+;               r8 = channel 1
+;               r9 = channel 2
+; Returns:
+; *******************************************************************
+>playnotes
+   STMFD   (sp)!,{r0-r6,link}            ; Stack registers
+;    SUB     r0,r0,#48                     ; take off ASCII 0
+;    ADR     r5,$`table                    ; address of the table
+   ADR     r5,$`table-48*4                 ; address of the table
+   ADD     r5,r5,r0,LSL #2               ; add on key and shift up (*4)
+   MOV     r4,r1                         ; r4 = period
+   LDR     r6,[r5]                       ; read the number
+; first one
+   LDR     r2,$`volume                   ; read volume
+   ADD     r2,r2,r8                      ; and stick the channel in too
+   BIC     r3,r6,#&FF000000              ; clear the top byte
+   BIC     r3,r3,#&00FF0000              ; and the one beside it
+   ADD     r3,r3,#&00040000              ; a duration of 4
+   XSWI    "Sound_QSchedule",r4,0
+; second one
+   LDR     r2,$`volume                   ; read volume
+   ADD     r2,r2,r9                      ; and stick the channel in too
+   MOV     r3,r6,LSR #16                 ; shift pitch down
+   ADD     r3,r3,#&00040000              ; a duration of 4
+   XSWI    "Sound_QSchedule",r4,0
+; bump period
+   ADD     r4,r4,#25                     ; 25 cs between each...
+   STR     r4,[sp,#4]                    ; store back on stack
+   LDMFD   (sp)!,{r0-r6,pc}              ; Return from call
+$`volume
+   EQUD    &017F0000
+
+$`table
+ FNtable
+
+#Library "Strings",cmpstringi
+#Here Libraries
+#Post
+*Channelvoice 1 1
+*Channelvoice 2 0
+VOICES 1
+END
+DIM A% 256
+$A%="888"
+CALL dial
+
+#End
+DEFFNtable
+LOCAL I
+RESTORE +1
+FORI=1TO10
+ READ a,b
+ [OPT pass%:EQUW a:EQUW b:]
+NEXT
+=pass%
+:
+DATA 24063,26145
+DATA 22288,25564
+DATA 22288,26145
+DATA 22288,26726
+DATA 22979,25564
+DATA 22979,26145
+DATA 22979,26726
+DATA 23482,25564
+DATA 23482,26145
+DATA 23482,26726
+

@@ -1,0 +1,723 @@
+In   -
+Out  DDEUtilsJF
+Type Module
+
+Define Workspace
+ Name      module
+ Default   r12
+  `prefixlist    !   linked list of prefixes
+  `clsize        !   command line size
+  `clptr         !   pointer to command line buffer
+  `throwhand     !   throwback task handle (or 0 to broadcast)
+  `msgblk        !   workspace for message block
+
+ Name      prefix
+ Default   r5
+  `next          !   the next entry
+  `last          !   make it doubly linked for easy !
+  `domain        !   the domain it's in
+  `prefix        !   pointer to the prefix string
+End Workspace
+
+Define Module
+ Name      DDEUtils
+ Author    Justin Fletcher
+ Commands
+  Name     Prefix
+  Code     com_prefix
+  Max      1
+  Min      0
+  Help     ...
+           *Prefix sets the current directory for the current context. Used
+           with no parameters it resets the current directory to the global
+           value.
+  Syntax   Syntax: *Prefix [<directory>]
+
+  Name     Prefixes
+  Code     com_prefixes
+  Help     *Prefixes lists prefixes currently defined.
+ End commands
+ Vectors
+  FileV      filev
+  GBPBV      gbpbv
+  FindV      findv
+  FSControlV fscontrolv
+ End Vectors
+ Services
+  WimpCloseDown  wimp_closedown
+ End Services
+ SWIs
+  Prefix     DDEUtils
+  Base       &42580
+   0         Prefix    swi_prefix
+   1         SetCLSize swi_setclsize
+   2         SetCL     swi_setcl
+   3         GetCLSize swi_getclsize
+   4         GetCl     swi_getcl
+   5         ThrowbackRegister   swi_throwbackregister
+   6         ThrowbackUnRegister swi_throwbackunregister
+   7         ThrowbackStart      swi_throwbackstart
+   8         ThrowbackSend       swi_throwbacksend
+   9         ThrowbackEnd        swi_throwbackend
+ End SWIs
+ Workspace *`len_module
+ Init      init
+ Final     final
+End Module
+
+Pre
+ LIBRARY "VersionBas":PROCinit_version
+ module_version$=version_major$
+ module_date$=version_date$
+End Pre
+
+#Rem off
+; *******************************************************************
+; Subroutine:   init
+; Description:  Initialise program, claiming spaces we need
+; Parameters:   r12-> workspace
+; Returns:      none
+; *******************************************************************
+>init
+   STMFD   (sp)!,{r0-r2,link}            ; Stack registers
+   XBL     claim,256                     ; claim space for message blk
+   STRW    r0,`msgblk                    ; store in workspace
+   LDMFD   (sp)!,{r0-r2,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   final
+; Description:  Finalise program, releasing spaces we claimed
+; Parameters:   r12-> workspace
+; Returns:      none
+; *******************************************************************
+>final
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDRW    r0,`msgblk                    ; message workspace
+   BL      release                       ; free it
+   LDRW    r0,`clptr                     ; read command line pointer
+   CMP     r0,#0                         ; did we claim some room ?
+   BLNE    release                       ; if so, free it
+   LDRW    r5,`prefixlist                ; read head of list
+$loop
+   CMP     r5,#0                         ; are we done ?
+   BEQ     $done                         ; if so, jump out
+   LDRW    r1,`next                      ; read 'next' pointer
+   LDRW    r0,`prefix                    ; read prefix pointer
+   BL      release                       ; release prefix
+   XBL     release,r5                    ; release block itself
+   MOV     r5,r1                         ; this=next
+   B       $loop                         ; go around again
+$done
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>findv
+   B       replacevars                   ; OS_Find
+>fscontrolv
+   TEQ     r0,#2                         ; is it 2 (New app starting) ?
+   TEQNE   r0,#4                         ; or 4 (*Run file) ?
+   MOVEQ   pc,link                       ; return if so
+   TEQ     r0,#0                         ; is it set csd ?
+   ORREQ   r12,r12,#1                    ; if so, mark us as being 'special'
+   B       replacevars                   ; call replacement OS_FSControl
+
+>gbpbv
+   CMP     r0,#5                         ; if it <5 ? (std gbpb calls)
+   MOVLTS  pc,link                       ; if so, return
+   B       replacevars                   ; otherwise, replace OS_GBPB
+
+>filev
+   B       replacevars                   ; OS_File
+
+; *******************************************************************
+; Subroutine:   wimp_closedown
+; Description:  A domain is exiting, we must remove it's workspace
+; Parameters:   r0 = 0 if it really is closing down
+; Returns:      none
+; *******************************************************************
+>wimp_closedown
+   TEQ     r0,#0                         ; is it a 'real' closedown ?
+   MOVNES  pc,link                       ; return if not
+   STMFD   (sp)!,{r0,link}               ; Stack registers
+   XBL     swi_prefix,0                  ; unset the prefix if one
+   LDMFD   (sp)!,{r0,pc}^                ; Return from call
+
+; *******************************************************************
+; Subroutine:   swi_setclsize
+; Description:  Set the Command Line length
+; Parameters:   r0 = length to use
+; Returns:      r0-> destination block
+; *******************************************************************
+>swi_setclsize
+   STMFD   (sp)!,{r1-r5,link}            ; Stack registers
+   MOV     r3,r0                         ; r1=length needed
+   REM     "Set CL Size %r3"
+   LDRW    r0,`clptr                     ; have we got an extended buffer ?
+   TEQ     r0,#0                         ; is there one ?
+   BLNE    release                       ; if so, release it
+   XSWI    "XOS_Module",6                ; claim space
+   MOVVS   r3,#0                         ; if failed, size = 0
+   MOVVS   r2,#0                         ; and pointer = 0
+   STRW    r3,`clsize                    ; store the size in ws
+   STRW    r2,`clptr                     ; store the pointer in workspace
+   MOVVC   r0,r2                         ; r0-> block
+   LDMFD   (sp)!,{r1-r5,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   swi_setcl
+; Description:  Sets the command line string
+; Parameters:   r0-> string
+; Returns:      none
+; *******************************************************************
+>swi_setcl
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+; check clptr valid
+   LDRW    r3,`clptr                     ; read the pointer
+   TEQ     r3,#0                         ; is it set ?
+   BEQ     $notset                       ; if not, jump out
+; check cl short enough
+;    BL      strlen                        ; find it's length
+   LDRW    r2,`clsize                    ; read buffer length
+;    CMP     r1,r2                         ; is it too small ?
+;    BGE     $tooshort                     ; buffer not large enough
+; copy string (from r0, to r3, length=r3)
+$copy
+   SUBS    r2,r2,#1                      ; decrement length
+   BMI     $done                         ; if 0, then done
+   LDRB    r4,[r0],#1                    ; read and inc
+   CMP     r4,#32                        ; is it < ' ' ?
+   MOVLT   r4,#0                         ; if so, use 0 to terminate
+   STRB    r4,[r3],#1                    ; write and inc
+   REM     "Read %r4 (%a4)"
+   B       $copy                         ; go for more
+$done
+
+   LDRW    r3,`clptr                     ; read the pointer
+   REM     "Set CL '%$3'"
+
+   LDMFD   (sp)!,{r0-r5,link}            ; restore regs
+   BICS    pc,link,#vbit                 ; return with V clear
+
+$notset
+$tooshort
+   LDMFD   (sp)!,{r0-r5,link}            ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+$`error
+   EQUD    &20601
+   EQUZA   "DDEUtils buffer not set or too short"
+
+; *******************************************************************
+; Subroutine:   swi_getclsize
+; Description:  Read the command line size
+; Parameters:   none
+; Returns:      r0 = length of command line
+; *******************************************************************
+>swi_getclsize
+   LDRW    r0,`clsize                    ; read it
+   MOV     pc,link                       ; return
+
+; *******************************************************************
+; Subroutine:   swi_getcl
+; Description:  Read the command line
+; Parameters:   r0-> buffer to copy into
+; Returns:      none
+; *******************************************************************
+>swi_getcl
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+; check clptr valid
+   LDRW    r3,`clptr                     ; read the pointer
+   TEQ     r3,#0                         ; is it set ?
+   BEQ     $notset                       ; if not, jump out
+   REM     "Get CL '%$3'"
+; now copy the string
+   LDRW    r2,`clsize                    ; read length of cli buffer
+$copy
+   SUBS    r2,r2,#1                      ; decrement length to read
+   BMI     $done
+   LDRB    r4,[r3],#1                    ; read and inc
+   CMP     r4,#32                        ; is it < ' ' ?
+   MOVLT   r4,#0                         ; if so, use 0 to terminate
+   STRB    r4,[r0],#1                    ; write and inc
+   REM     "Read %r4 (%a4)"
+   B       $copy
+$done
+   LDRW    r0,`clptr                     ; read the pointer
+   BL      release                       ; release space
+   MOV     r0,#0                         ; 0 for length
+   STRW    r0,`clptr                     ; zero pointer
+   STRW    r0,`clsize                    ; zero size
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+$notset
+   LDMFD   (sp)!,{r0-r5,link}            ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+$`error
+   EQUD    &20601
+   EQUZA   "DDEUtils buffer not set"
+
+; *******************************************************************
+; Subroutine:   swi_prefix
+; Description:  Sets the prefix for the current directory (or unsets
+;               it)
+; Parameters:   r0-> prefix name, or "" or 0 to unset
+; Returns:      with error if can't do it
+; *******************************************************************
+>swi_prefix
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   MOV     r3,r0                         ; r3-> string
+   CMP     r0,#0                         ; is r0 = 0 ?
+   LDRNEB  r4,[r0]                       ; if not read first byte of r0
+   CMPNE   r4,#32                        ; is it <32 ?
+   MOVLE   r4,#0                         ; if either, no args
+   MOVGT   r4,#1                         ; else, r4 = 1 arg
+; r3-> args, r4 = 0 for no args (unset), 1 for 1 arg (set)
+   REM     "SWI_Prefix %$3 (%r4)"
+   LMOV    r0,#&FF8                      ; address of domain Id
+   LDR     r1,[r0]                       ; read our domain id
+   LDRW    r5,`prefixlist                ; read list
+   RAS     r5,r1,#`domain                ; create the list entry
+   CMP     r5,#0                         ; is it valid ?
+   BEQ     $createanew                   ; nope, so we create one specially
+   LDRW    r0,`prefix                    ; re-read the prefix
+   BL      release                       ; free the string
+   B       $created                      ; now let's deal with it...
+
+$createanew
+   XBL     claim,`len_prefix             ; claim space for the block
+   LDRW    r5,`prefixlist                ; read top of prefix list
+   CMP     r5,#0                         ; is it 'valid' ?
+   STRWNE  r0,`last                      ; store us as their 'last' pointer
+   STRW    r0,`prefixlist                ; we are the head of the prefix list
+   STR     r5,[r0,#`next]                ; link the list to us
+   MOV     r5,r0                         ; r5-> block
+   MOV     r0,#0                         ; null the 'last' pointer
+   STRW    r0,`last                      ; store it
+$created
+;    REM     "Created entry, r5->%&5"
+   CMP     r4,#0                         ; did they give any params ?
+   BEQ     $deleteentry                  ; nope, so delete prefix
+   BL      docanonicalisation            ; canonicalise it
+   STRW    r0,`prefix                    ; store our prefix
+   STRW    r1,`domain                    ; store our domainid
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+$deleteentry
+   LDRW    r1,`last                      ; read 'last' pointer
+   LDRW    r2,`next                      ; read 'next' pointer
+   CMP     r1,#0                         ; is 'last' 0 ? (at head)
+   STRWEQ  r2,`prefixlist                ; if so, store next as 'head'
+   STRNE   r2,[r1,#`next]                ; otherwise, link it to us
+   CMP     r2,#0                         ; is 'next' 0 ? (at tail)
+   STRNE   r1,[r2,#`last]                ; if not, store our 'back' link
+   XBL     release,r5                    ; free 'us'
+;    REM     "Freed"
+
+   LDMFD  (sp)!,{r0-r5,pc}               ; Return from call
+
+; *******************************************************************
+; Subroutine:   swi_throwbackregister
+; Description:  Register a task for handling all throwback
+; Parameters:   R0 = task handle
+; Returns:      none
+; *******************************************************************
+>swi_throwbackregister
+   STRW    r0,`throwhand                 ; store the handle
+   MOV     pc,link                       ; return nicely
+>swi_throwbackunregister
+   STMFD   (sp)!,{r1,link}               ; Stack registers
+   LDRW    r1,`throwhand                 ; read old handle
+   CMP     r0,r1                         ; was it them who we knew ?
+   MOVEQ   r1,#0                         ; if so, we need to null it
+   STRWEQ  r1,`throwhand                 ;        and store it
+   LDMFD   (sp)!,{r1,pc}                 ; Return from call
+
+; *******************************************************************
+; Subroutine:   swi_throwbackstart
+; Description:  Start the throwback session
+; Parameters:   none
+; Returns:      none
+; *******************************************************************
+>swi_throwbackstart
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   SUB     sp,sp,#20                     ; take off 20 from stack
+   MOV     r0,#20                        ; length of message (0)
+   MOV     r1,#0                         ; destination (4)
+   MOV     r2,#0                         ; their ref (8)
+   MOV     r3,#0                         ; our ref (12)
+   LMOV    r4,#&42580                    ; throwback start message
+   STMIA   (sp),{r0-r4}                  ; place 'em in buffer
+   LDRW    r2,`throwhand                 ; read the throwback handle
+   XSWI    "XWimp_SendMessage",17,r13    ; send message
+   ADD     sp,sp,#20                     ; add it back on
+   LDMVCFD (sp)!,{r0-r5,pc}              ; Return from call
+   LDMFD   (sp)!,{r0-r5,link}            ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+$`error
+   EQUD    0
+   EQUZA   "Throwback cannot be used outside the desktop"
+
+; *******************************************************************
+; Subroutine:   swi_throwbacksend
+; Description:  Send a throwback message at the task
+; Parameters:   r0 = reason (0=processing, 1=error, 2=info)
+;               r2 = filename
+;               r3 = line number
+;               r4 = severity (0-2)
+;               r5 = message
+; Returns:      none
+; *******************************************************************
+>swi_throwbacksend
+   STMFD   (sp)!,{r0-r6,link}            ; Stack registers
+   MOV     r6,r0                         ; r6 = reason (0, 1, 2)
+   BL      canonicalise                  ; canonicalise and copy
+   XBL     strlen,r2                     ; find length of string
+   ADD     r1,r1,#4+20                   ; add on 4+20 (for block)
+   BIC     r1,r1,#3                      ; word align
+; build message block
+   REM     "Reason = %r6, file = %$2"
+   LDRW    r5,`msgblk                    ; address of message block
+   STR     r1,[r5,#0]                    ; store length of block
+   ADD     r1,r5,#20                     ; r1-> filename dest
+   BL      strcpy                        ; copy the string there
+   XBL     release,r2                    ; release the canonicalise space
+   MOV     r0,#0                         ; 0's for the ref's
+   STR     r0,[r5,#8]                    ; store theirref
+   STR     r0,[r5,#12]                   ; store ourref
+   LMOV    r0,#&42580                    ; base message number
+   TEQ     r6,#0                         ; are we 'processing' ?
+   ADDEQ   r0,r0,#1                      ; if so, make &42581
+   TEQ     r6,#1                         ; are we 'erroring' ?
+   ADDEQ   r0,r0,#2                      ; if so, make &42582
+   TEQ     r6,#2                         ; are we 'infoing' ?
+   ADDEQ   r0,r0,#5                      ; if so, make &45585
+   STR     r0,[r5,#16]                   ; store it in block
+; now send it (file message)
+   LDRW    r2,`throwhand                 ; read throwback handler
+   XSWI    "XWimp_SendMessage",17,r5     ; send it
+   BVC     $noerr
+   REM     "%E0"                         ; error!
+$noerr
+   TEQ     r6,#0                         ; was it 'processing' ?
+   BEQ     $done                         ; yep, so we're done !
+; build details block
+   LDR     r0,[r5,#16]                   ; read message number
+   ADD     r0,r0,#1                      ; add one to it (for details)
+   STR     r0,[r5,#16]                   ; and store back
+   STR     r3,[r5,#20]                   ; store line number
+   STR     r4,[r5,#24]                   ; store severity
+   LDR     r0,[sp,#4*5]                  ; re-read message pointer
+   BL      strlen                        ; find it's length
+   CMP     r1,#227                       ; is it >227 ?
+   MOVGE   r1,#227                       ; if so, reduce to 227
+   ADDLT   r1,r1,#1                      ; if not, bump up by one
+   ADD     r3,r1,#4+28                   ; add four to it (and block offset)
+   BIC     r3,r3,#3                      ; word align
+   STR     r3,[r5]                       ; store as block len
+   MOV     r3,#0                         ; zero terminate dest
+   ADD     r4,r5,#28                     ; r4-> message dest
+   STRB    r3,[r4,r1]                    ; store as terminator
+$msgloop
+   SUBS    r1,r1,#1                      ; decrement counter
+   BMI     $donemsg                      ; if -ve, we're done
+   LDRB    r3,[r0,r1]                    ; read byte
+   STRB    r3,[r4,r1]                    ; store byte
+   B       $msgloop                      ; and go for more
+$donemsg
+; now send the details
+   XSWI    "XWimp_SendMessage",17,r5     ; send it
+$done
+   LDMFD   (sp)!,{r0-r6,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   canonicalise
+; Description:  Canonicalise a path
+; Parameters:   r2-> filename
+; Returns:      r2-> canonical filename, in memory buffer
+; *******************************************************************
+>canonicalise
+   STMFD   (sp)!,{r0-r1,r3-r5,link}      ; Stack registers
+   MOV     r1,r2                         ; r1-> filename to convert
+   XSWI    "XOS_FSControl",37,,0,0,0,0   ; find length of filename
+   RSB     r5,r5,#0                      ; r5=length needed
+   ADD     r5,r5,#1                      ; add on one for terminator
+   XBL     claim,r5                      ; claim that much
+   MOV     r2,r0                         ; r2-> buffer
+   XSWI    "XOS_FSControl",37,,,0,0      ; decode it to buffer
+   LDMFD   (sp)!,{r0-r1,r3-r5,pc}        ; Return from call
+
+; *******************************************************************
+; Subroutine:   swi_throwbackend
+; Description:  End a throwback session
+; Parameters:   none
+; Returns:      none
+; *******************************************************************
+>swi_throwbackend
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   SUB     sp,sp,#20                     ; take off 20 from stack
+   MOV     r0,#16                        ; length of message (0)
+   MOV     r1,#0                         ; destination (4)
+   MOV     r2,#0                         ; their ref (8)
+   MOV     r3,#0                         ; our ref (12)
+   LMOV    r4,#&42584                    ; throwback end message
+   STMIA   (sp),{r0-r4}                  ; place 'em in buffer
+   LDRW    r2,`throwhand                 ; read the throwback handle
+   XSWI    "XWimp_SendMessage",17,sp     ; send message
+   ADD     sp,sp,#20                     ; add it back on
+   LDMFD   (sp)!,{r0-r5,pc}^             ; Return from call
+
+; *******************************************************************
+; Subroutine:   com_prefixes
+; Description:  Display the prefixes currently set
+; Parameters:   r12-> private word (not = private word!)
+; Returns:      none
+; *******************************************************************
+>com_prefixes
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDR     r12,[r12]                     ; read our workspace
+   LDRW    r5,`prefixlist                ; read head of list
+$loop
+   CMP     r5,#0                         ; done ?
+   BEQ     $done
+   LDRW    r0,`next                      ; read next
+   LDRW    r1,`last                      ; read last
+   LDRW    r2,`domain                    ; read domainid
+   LDRW    r3,`prefix                    ; read prefix
+   LDRB    r4,[r3],#4                    ; r4 = length of 'fs'
+   ADD     r4,r4,r3                      ; add on to base
+   ADD     r4,r4,#1                      ; skip terminator
+   REMP    "This=%&5, Next=%&0, Last=%&1"
+   REMP    "Domain=%&2, FS=%$3, CSD=%$4"
+   MOV     r5,r0                         ; this=next
+   B       $loop                         ; and go some more
+$done
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   com_prefix
+; Description:  Sets the current prefix
+; Parameters:   r0 = cli
+; Returns:      none
+; *******************************************************************
+>com_prefix
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDR     r12,[r12]                     ; read our workspace
+   BL      swi_prefix                    ; process it (quickly?)
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   docanonicalisation
+; Description:  Canonicalise, claim space for, and return result in
+;               r0
+; Parameters:   r3-> thing to canonicalise
+; Returns:      r0-> new strdup'd string
+; *******************************************************************
+>docanonicalisation
+   STMFD   (sp)!,{r1-r5,link}            ; Stack registers
+   XBL     strdup,r3                     ; copy the string
+   MOV     r1,r0                         ; r1-> copied string
+$rdloop
+   LDRB    r3,[r0],#1                    ; read and inc
+   CMP     r3,#32                        ; is that it ?
+   BGT     $rdloop                       ; if not, keep going
+   LDRB    r3,[r0,#-2]                   ; read the last but one char ?
+   CMP     r3,#ASC(".")                  ; is it a '.' ?
+   MOVEQ   r3,#0                         ; if so, remove it
+   STREQB  r3,[r0,#-2]                   ; store over it
+   XSWI    "XOS_FSControl",37,,0,0,0,0   ; find it's length
+   RSB     r5,r5,#0                      ; r5=length needed
+   ADD     r5,r5,#1                      ; add on one for terminator
+   ADD     r0,r5,#4                      ; add on 'fs len space'
+   XBL     claim                         ; claim that much
+;    TEQ     r0,#0                         ; check enough space (N/A)
+   ADD     r2,r0,#4                      ; r2-> buffer for result
+   XSWI    "XOS_FSControl",37,,,0,0      ; decode it to buffer
+   XBL     release,r1                    ; free the strdup'd name
+   REM     "Canonicalised to %$2, returned r5=%r5"
+   MOV     r1,#0                         ; 0 bytes into it
+$findcolonloop
+   LDRB    r0,[r2,r1]                    ; read a byte
+   CMP     r0,#32                        ; is it 'term' ?
+   MOVEQ   r1,#0                         ; if so, the string is 0 long
+   BEQ     $found                        ; and pretend we found it
+   CMP     r0,#ASC(":")                  ; is it a colon ?
+   ADDNE   r1,r1,#1                      ; if not, next char
+   BNE     $findcolonloop                ; and go around more
+; r2-> canonicalised name, r1 = offset of colon in string
+$found
+   MOV     r3,#0                         ; terminate at it
+   STRB    r3,[r2,r1]                    ; store over the colon
+   STRB    r1,[r2,#-4]!                  ; store the length and decrment
+   ADD     r0,r2,r1                      ; r0-> terminator
+   ADD     r0,r0,#1                      ; r0-> after terminator
+   XBL     strlen                        ; find strlen
+   STRB    r1,[r2,#1]                    ; store at offset 1
+   MOV     r0,r2                         ; r0-> block
+   LDMFD   (sp)!,{r1-r5,pc}              ; Return from call
+
+; *******************************************************************
+; Subroutine:   replacevars
+; Description:  Replaces FS$CurrentFS and FS$<currentfs>$csd for the
+;               duration of the call, then restores them afterwards
+; Parameters:   as vector
+; Returns:      as vector, having postprocessed it
+; *******************************************************************
+>replacevars
+   STMFD   (sp)!,{r0-r10,link}           ; Stack registers
+; check 'special' markers
+   TST     r12,#3                        ; is b0 or b1 set in ws ?
+   AND     r9,r12,#3                     ; r9='marker'
+   BICNE   r12,r12,#3                    ; clear it if so
+
+   LDRW    r10,`prefixlist               ; r10-> our list
+   LMOV    r0,#&FF8                      ; address of domain Id
+   LDR     r0,[r0]                       ; read our domain id
+   RAS     r10,r0,#`domain               ; find if it's in the list
+   TEQ     r10,#0                        ; did we find it
+
+;    STRNE   r10,[r10,#`domain]            ; kill the next recurrance
+
+$nothingdone
+   LDMEQFD (sp)!,{r0-r10,pc}             ; nope, so return nicely
+; find len of CurrentFilingSystem
+   XSWI    "XOS_ReadVarVal",^$`fscsfs,-1,-1,0,0 ; find len of current fs
+   TEQ     r2,#0                         ; was there a variable ?
+   MOVEQ   r8,#0                         ; if none, no current fs
+   BEQ     $gotoldfs
+   RSB     r2,r2,#0                      ; r0=length to claim
+   ADD     r2,r2,#1                      ; 1 more, to be sure !
+   XBL     claim,r2                      ; claim it
+   TEQ     r0,#0                         ; did it work ?
+   BEQ     $nothingdone                  ; if not, we failed - abort !
+   MOV     r8,r0                         ; r8-> fs
+; read CurrentFilingSystem
+   XSWI    "XOS_ReadVarVal",^$`fscsfs,r8,,0,0 ; read current fs
+   MOV     r0,#0
+   STR     r0,[r8,r2]                    ; store terminator after string
+$gotoldfs
+   MOV     r0,#(fscsd_leftlen+fscsd_rightlen+1) ; base length of string
+   LDR     r4,[r10,#`prefix]             ; read pointer to prefix
+   LDRB    r4,[r4,#0]                    ; read length of FS
+   ADD     r2,r4,#1                      ; add one for luck
+   ADD     r0,r0,r2                      ; add on the number of bytes read
+   BL      claim                         ; claim space for variable name
+   TEQ     r0,#0                         ; did it fail ?
+   BEQ     $nothingdone                  ; if so, panic !
+   MOV     r6,r0                         ; r6-> csd variable name
+   MOV     r1,#fscsd_leftlen             ; r1 = len to copy
+   ADR     r3,$`fscsd_left               ; address to copy from
+$leftloop
+   SUBS    r1,r1,#1                      ; go down by one
+   BMI     $leftdone                     ; if -ve, we're done
+   LDRB    r2,[r3,r1]                    ; read byte
+   STRB    r2,[r6,r1]                    ; store in new buffer
+   B       $leftloop                     ; and do again
+; copied the left side
+$leftdone
+   LDR     r0,[r10,#`prefix]             ; read pointer to prefix data
+   ADD     r0,r0,#4                      ; skip the fs len, r0-> fs
+   ADD     r1,r6,#fscsd_leftlen          ; add on leftlen (-> fsname)
+   XBL     strcpy,,r1                    ; copy it on
+   ADD     r1,r1,r4                      ; add on fslen
+   XBL     strcpy,^$`fscsd_right         ; and the right side
+; read csd var len
+   XSWI    "XOS_ReadVarVal",r6,-1,-1,0,0 ; find length of it's var
+   TEQ     r2,#0                         ; was there a variable ?
+   MOVEQ   r7,#0                         ; if none, no current directory
+   BEQ     $gotblks
+; now read val itself
+   RSB     r2,r2,#0                      ; r0=length to claim
+   ADD     r2,r2,#2                      ; 1 more, to be sure !
+   XBL     claim,r2                      ; claim it
+   TEQ     r0,#0                         ; did it work ?
+   BEQ     $nothingdone                  ; if not, we failed - abort !
+   MOV     r7,r0                         ; r7-> fs value
+   XSWI    "XOS_ReadVarVal",r6,r7,,0,0   ; read current fs
+   MOV     r0,#0
+   STRB    r0,[r7,r2]                    ; store terminator after string
+$gotblks ; temporary until we're got it working
+   REM     "FS was %$8"
+   REM     "FSCSD Var = %$6"
+   REM     "FSCSD = %$7"
+; now to set the vars
+   LDR     r5,[r10,#`prefix]             ; read pointer to prefix block
+   LDRB    r2,[r5,#0]                    ; read length of FS
+   ADD     r1,r5,#4                      ; r1-> value to set
+   REM     "Setting FS to %$1"
+   XSWI    "XOS_SetVarVal",^$`fscsfs,,,0,0 ; set current fs
+   LDRB    r2,[r5,#0]                    ; read length of FS
+   ADD     r1,r5,r2                      ; r1-> value to set
+   ADD     r1,r1,#5                      ; skip the 'length' data
+   LDRB    r2,[r5,#1]                    ; read length of csd
+   REM     "Setting CSD to %$1"
+   XSWI    "XOS_SetVarVal",r6,,,0,0      ; set csd
+; now to pass on to original caller
+   LDMFD   (sp)!,{r0-r5}                 ; restore 'normal' registers
+   STMFD   (sp),{r6,r7,r8,r9}            ; stack 'our' registers (nowb)
+   LDMFD   (sp),{r6-r10}                 ; re-read old registers
+   SUB     sp,sp,#4*4                    ; move down to our bottom of stack
+; on stack now, r6,r7,r8,r9,or6,or7,or8,or9,or10,return to address
+   STMFD   (sp)!,{pc}                    ; store our pc so we know we return
+   ADD     r12,sp,#4*10                  ; read return point
+   LDMFD   r12,{pc}                      ; return there
+
+; we drop to here on return
+   NOP
+   STMFD   (sp)!,{r0-r9,pc}              ; stack regs 0-8 and pc
+   MOV     r0,pc                         ; r0=pc
+   REM     "Called on exit"
+   ADD     r5,sp,#4*11                   ; skip the registers we just stacked
+   LDMIA   r5,{r6,r7,r8,r9}              ; re-read the regs we hung on to
+; r6-> csd var, r7-> csd, r8-> csfs, r9= 'special' marker
+; first perform special functions
+   TEQ     r9,#1                         ; is it 'set csd' ?
+   BNE     $notspecial                   ; if not, skip this
+   TST     r0,#vbit                      ; is v set (was there an error) ?
+   BNE     $notspecial                   ; if error, abort
+   XSWI    &62580,^$`thisdir             ; call the swi marking new dir
+$notspecial
+; restore current filing system
+   CMP     r8,#0                         ; is csfs 0 ?
+   XBLNE   strlen,r8                     ; if not, read it's length
+   MVNEQ   r2,#NOT -1                    ; if so, use -1 to delete
+   MOVNE   r2,r1                         ; otherwise, r2=length
+   REM     "Restoring FS %$8"
+   XSWI    "XOS_SetVarVal",^$`fscsfs,r8,,0,0 ; set it (restore current fs)
+; restore csd variable
+   CMP     r7,#0                         ; is csd 0 ?
+   XBLNE   strlen,r7                     ; if not, read it's length
+   MVNEQ   r2,#NOT -1                    ; if so, use -1 to delete
+   MOVNE   r2,r1                         ; otherwise, r2=length
+   REM     "Restoring CSD %$7"
+   XSWI    "XOS_SetVarVal",r6,r7,,0,0    ; set it (restore csd)
+; release the space !
+   CMP     r8,#0                         ; is r8 (fs) valid ?
+   XBLNE   release,r8                    ; if so, release it
+   XBL     release,r6                    ; release the csd var
+   CMP     r7,#0                         ; is r7 (csd) valid ?
+   XBLNE   release,r7                    ; if so, release it
+; now return nicely
+   REM     "Returning"
+   LDMFD   (sp)!,{r0-r9,link}            ; restore registers
+   ADD     sp,sp,#4*10                   ; add on the 9 regs to skip
+   TST     link,#vbit                    ; was v set
+   LDMFD   (sp)!,{link}                  ; re-read link
+   ORRNES  pc,link,#vbit                 ; if so, return with vset
+   BICEQS  pc,link,#vbit                 ; else, don't
+
+$`thisdir
+   EQUZA   "@"
+$`fscsfs
+%fscsd_leftlen=LEN("FileSwitch$")
+%fscsd_rightlen=LEN("$CSD")
+$`fscsd_left
+   EQUZA   "FileSwitch$CurrentFilingSystem"
+$`fscsd_right
+   EQUZA   "$CSD"
+
+#Library "Memory",claim.release.strdup
+#Library "Strings",strlen.strcpy
+#Here Libraries
+#Post
+#Run <CODE>

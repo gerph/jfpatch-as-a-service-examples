@@ -1,0 +1,150 @@
+In   -
+Out  SerialTCP
+Type Module
+Ver  1.00b
+
+Define Workspace
+ Name      module
+ Default   r12
+  `ehandle !  the ESocket handle
+End Workspace
+
+Define Module
+ Name      SerialTCP
+ Author    Justin Fletcher
+ Vectors
+  SerialV  vector_serialv
+ End Vectors
+ Commands
+  Name     Listen
+  Code     com_listen
+
+  Name     Connect
+  Min      1
+  Max      1
+  Code     com_connect
+ End Commands
+End Module
+
+; *******************************************************************
+; Subroutine:   vector_serialv
+; Description:  Serial vector routines
+; Parameters:   r0 = reason code
+;                    3 = send byte
+;                    4 = get byte
+; Returns:      r1 = character read (r0=3)
+; *******************************************************************
+>vector_serialv
+   TEQ     r0,#3                         ; is it send ?
+   BEQ     sendbyte                      ; yes, so send a byte
+   TEQ     r0,#4                         ; is it get ?
+   BEQ     getbyte                       ; yes, so get a byte
+   TEQ     r0,#5
+   TEQNE   r0,#6                         ; Set speed
+   BEQ     setspeed                      ; jump
+   LDMIA   (sp)!,{pc}^                   ; return
+
+>sendbyte
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   STRB    r1,$`byte                     ; store it
+   LDRW    r0,`ehandle                   ; get the handle
+   TEQ     r0,#0                         ; is it valid?
+   LDMEQFD (sp)!,{r0-r5,link}            ; if not, restore registers
+   LDREQ   link,[sp],#4                  ;         read PC
+   BICEQS  pc,link,#cbit                 ;         clear C
+   XSWI    "ESocket_SendData",,^$`byte,1 ; Send it
+   LDMFD   (sp)!,{r0-r5,link}            ; Restore registers
+   LDR     link,[sp],#4                  ; read PC
+   BICS    pc,link,#cbit                 ; clear C
+$`byte
+   EQUD    0
+
+>getbyte
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDRW    r0,`ehandle                   ; get the handle
+   TEQ     r0,#0                         ; is it valid ?
+   MOVEQ   r2,#0                         ; if not, pretend we got nothing
+   XSWINE  "ESocket_ReadData",,^$`byte,1 ; Send it
+   TEQ     r2,#1                         ; did it work ?
+   LDMFD   (sp)!,{r0-r5,link}            ; Restore registers
+   LDREQB  r0,$`byte                     ; read the byte
+   LDR     link,[sp],#4                  ; read PC
+   BICEQS  pc,link,#cbit                 ; clear C
+   ORRS    pc,link,#cbit                 ; set C if error
+$`byte
+   EQUD    0
+
+>setspeed
+   MOV     r1,#0                         ; return the speed
+   LDR     link,[sp],#4                  ; read PC
+   MOVS    pc,link                       ; return
+
+>status
+   LMOV    r1,#0
+   LMOV    r2,#0
+   LDR     link,[sp],#4                  ; read PC
+   MOVS    pc,link                       ; return
+
+>com_listen
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDR     r12,[r12]                     ; read the private word
+   LDRW    r0,`ehandle
+   TEQ     r0,#0                         ; is it already claimed ?
+   BNE     alreadyclaimed
+   REM     "Listening"
+   XSWI    "ESocket_Listen",7777         ; the port
+   STRW    r0,`ehandle                   ; store ehandle
+$loop
+   LDRW    r0,`ehandle                   ; read handle
+   XSWI    "ESocket_Accept",,1           ; close it after
+   CMP     r0,#0                         ; is it valid ?
+   BLE     $loop                         ; if not, go for more
+   STRW    r0,`ehandle                   ; store the handle
+   REM     "Connected"
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+>alreadyclaimed
+   LDMFD   (sp)!,{r0-r5,link}            ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+
+$`error
+   EQUD    0
+   EQUZA   "Already connected"
+
+>com_connect
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   LDR     r12,[r12]                     ; read the private word
+   LDR     r12,[r12]                     ; read the private word
+   LDRW    r0,`ehandle
+   TEQ     r0,#0                         ; is it already claimed ?
+   BNE     alreadyclaimed
+   REM     "Connecting"
+   XSWI    "ESocket_ConnectToHost",,7777
+   STRW    r0,`ehandle                   ; store it
+$loop
+   LDRW    r0,`ehandle
+   XSWI    "ESocket_CheckState"          ; check it
+   TEQ     r0,#4                         ; are we at state 4 ?
+   BEQ     $found
+   CMP     r0,#0
+   MOVLT   r1,#0
+   STRWLT  r1,`ehandle                   ; zero the handle if error
+   BLT     $error
+   B       $loop
+$found
+   REM     "Connected"
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
+
+$error
+   REM     "Failed, error = %r0"
+   LDMFD   (sp)!,{r0-r5,link}            ; restore registers
+   ADR     r0,$`error                    ; read error
+   ORRS    pc,link,#vbit                 ; return with V set
+
+$`error
+   EQUD    0
+   EQUZA   "Error in connection"
+
+#Post
+#Run <CODE>

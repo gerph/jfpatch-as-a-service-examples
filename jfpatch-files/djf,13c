@@ -1,0 +1,88 @@
+In   -
+Out  djf
+Type Utility
+Ver  1.02m
+
+Pre
+
+ REM LIBRARY "VersionBas":PROCinit_version
+ REM module_version$=version_major$
+ REM module_date$=version_date$
+
+ module_version$="0.00"
+ module_date$="Today"
+
+End Pre
+
+.playtune
+   STMFD   (sp)!,{r0-r5,link}            ; Stack registers
+   MOV     r5,r1                         ; r5-> command string
+   XSWI    "Sound_QInit"                 ; reinit the sound system
+   XSWI    "Sound_QTempo",&800           ; set the tempo I want
+   LDRB    r0,[r5]                       ; read first byte
+   CMP     r0,#32                        ; is it ctrl ?
+   ADRLT   r5,$`toplay                   ; if so, play what I want to play
+   MOV     r8,#0                         ; r8 = 0 (beat to play on)
+
+; the loop
+$loop
+   LDRB    r2,[r5],#1                    ; read a byte (pitch)
+   CMP     r2,#32                        ; is it a terminator ?
+   BLT     $exit                         ; if so, return
+; find what pitch this is
+   ADR     r4,$`notenums-1               ; the notes DB (less one)
+   ADR     r3,$`notenums-37              ; the notes DB (again)
+$getpitch
+   LDRB    r1,[r4,#1]!                   ; read a byte
+   TEQ     r1,#0                         ; is it not found ?
+   TEQNE   r1,r2                         ; if not, is it the number we want ?
+   BNE     $getpitch                     ; go around again if not...
+   SUB     r4,r4,r3                      ; find the index
+   ADD     r3,r4,r4,LSL #2               ; r3 = index * 5
+   MOV     r3,r3,LSL #2                  ; r3 = (index * 5) * 4
+   ADD     r3,r3,r3,LSL #4               ; r3 += (index * 5) * 16
+   ADD     r3,r3,r4                      ; add original number (*&155)
+; now read the length of the note
+   LDRB    r4,[r5],#1                    ; read a byte (length)
+   CMP     r4,#32                        ; is it a terminator ?
+   BLT     $exit                         ; if so, jump out
+   SUBS    r4,r4,#48                     ; length
+   BMI     $loop                         ; Dunno what that was, skip it
+   ADDEQ   r4,r4,#ASC("G")-48            ; make it equivilent from G
+   CMP     r4,#ASC("A")-48               ; is it A or higher ?
+   SUBGE   r4,r4,#ASC("A")-48-10         ; make it 10 and higher
+;    REM     "Play %&3 for %r4%C"
+;    REM     "%&2,%&3"
+   ADD     r7,r4,r4,LSL #2               ; (beats) r7 = r3 * 5
+;    REM     "%r4 = %r8"
+   MOV     r4,r4,LSL #1                  ; double length
+   SUB     r4,r4,#1                      ; take one
+   MOV     r1,#0                         ; r1 = 0 (Sound_ControlPacked)
+   TEQ     r2,#ASC("_")                  ; is it _ (silence) ?
+   BEQ     $playnowt                     ; if so, skip 'play'
+   LDR     r2,$ampchan                   ; if not, r2 = amplitide and channel
+   ADD     r3,r3,r4,LSL #16              ; r3 = pitch + duration * &10000
+$tryagain
+   MOV     r0,r8                         ; r0 = beat number
+;    REM     "%&0,%&2,%&3"
+   SWI     "Sound_QSchedule"
+   TEQ     r0,#0                         ; did we succeed ?
+   BLT     $tryagain                     ; nope, so try once more
+$playnowt
+   ADD     r8,r8,r7                      ; beat number += beats
+   B       $loop
+
+$exit
+   LDMFD   (sp)!,{r0-r5,pc}              ; if so, return
+
+$ampchan
+   EQUD    &FFF10000+&0001               ; volume -15, channel 1
+$`notenums
+   EQUZ    "azsxcfvgbnjmk,l.q2w3er5t6y7ui9o0p"
+
+$`toplay
+   EQUZ    ".3w6e2w2.226,6q6w2q2,2.3,2m4"
+   ALIGN
+
+#Post
+REM  #Run <CODE>

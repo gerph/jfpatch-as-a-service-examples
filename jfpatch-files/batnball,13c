@@ -1,0 +1,89 @@
+In   -
+Out  Test
+Type Utility
+Ver  1.00d
+
+Pre
+   x0=7:y0=8
+   xa=5:ya=6
+   shift=4
+   mx=9:my=10
+   sx=11:sy=12
+
+   radius=16
+   barw=64:barh=32
+End Pre
+
+.start
+   SWI     &100+22
+   SWI     &100+27
+   MOV     sx,#1280
+   MOV     sy,#1024
+   MOV     x0,sx, LSR #2
+   MOV     y0,sy, LSR #2
+   SUB     sy,sy,#128
+   MOV     xa,#12
+   MOV     ya,#12
+   MOV     shift,#0
+   SWI     &100+18                       ; Set GCOL
+   SWI     &100+3                        ; EOR
+   SWI     &100+7                        ; set the colour to use
+
+$loopdraw
+   MOV     r1,mx
+   MOV     r2,#64
+   SUB     r1,r1,#barw
+   XSWI    "OS_Plot",4
+   ADD     r1,r1,#barw*2
+   ADD     r2,r2,#barh
+   XSWI    "OS_Plot",96+5
+
+   MOV     r1,x0
+   MOV     r2,y0
+   XSWI    "OS_Plot",4
+   ADD     r1,r1,#radius
+   XSWI    "OS_Plot",152+5
+
+   EORS    shift,shift,#1
+   BNE     $drawn
+
+; move it...
+   CMP     r1,sx
+   RSBGE   xa,xa,#0
+   BGE     $notleft
+   CMP     x0,#radius
+   RSBLE   xa,xa,#0
+
+$notleft
+   ADD     r2,r2,#radius
+   CMP     r2,sy
+   RSBGE   ya,ya,#0
+   BGE     $notright
+   CMP     y0,#64+radius                 ; The bottom of the bar
+   BLE     $exit                         ; you lose !
+   CMP     y0,#64+radius+barh            ; are we under the top of the bar ?
+   BGT     $notright
+   SUB     r0,mx,r1                      ; r0 = centre bar - right circle
+   ADDS    r0,r0,#barw                   ; right bar
+   MOVS    r0,r0
+   BMI     $notright                     ; ball to right
+   SUB     r0,mx,x0                      ; r0 = centre bar - centre circle
+   SUBS    r0,r0,#barw+radius            ; left bar and left circle
+   MOVS    r0,r0
+   BPL     $notright
+   RSB     ya,ya,#0
+
+$notright
+   ADD     x0,x0,xa                      ; move ball x
+   ADD     y0,y0,ya                      ; move ball y
+
+   SWI     "OS_Mouse"                    ; find mouse loc
+   MOV     mx,r0
+   B       $loopdraw
+
+$drawn
+   XSWI    "OS_Byte",19
+   B       $loopdraw
+
+$exit
+   MOV     pc,link
