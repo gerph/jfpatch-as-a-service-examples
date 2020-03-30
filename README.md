@@ -22,6 +22,7 @@ won't be 32bit safe. I just haven't got around to that, what with trying to impl
 the general anxiety over doing anything publically and the end of the world. I hope that I'll get the
 back end JFPatch updated to create 32bit modules at some point soon.
 
+* `hello-world,13c` - A simple 'hello world' utility.
 * `base64,13c` - A simple example module that decodes a Base64 encoded block.
 * `batnball,13c` - A sub-256 byte utility to bounce a ball and hit it with a bat.
 * `ddeutils,13c` - My implementation of DDEUtils, which I wrote because otherwise you couldn't use throwback or prefixing without buying the Desktop Development Environment.

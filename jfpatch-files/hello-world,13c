@@ -1,0 +1,19 @@
+In   -
+Out  Example
+Type Utility
+
+.helloworld
+    ADR    r0, $message
+    SWI    "OS_Write0"
+    XSWI   "OS_Write0", ^$world
+    SWI    "OS_NewLine"
+    MOV    pc, link
+    
+$message
+    EQUZ  "Hello "
+
+$world
+    EQUZ  "world"
+
+#Post
+#Run <CODE>
