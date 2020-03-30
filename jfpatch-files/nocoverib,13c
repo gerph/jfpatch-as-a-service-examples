@@ -24,9 +24,9 @@ End Module
 
 Pre
 
- LIBRARY "VersionBas":PROCinit_version
- module_version$=version_major$
- module_date$=version_date$
+ REMLIBRARY "VersionBas":PROCinit_version
+ REMmodule_version$=version_major$
+ REMmodule_date$=version_date$
 
  ibtop=128
  REM # Cond Inline

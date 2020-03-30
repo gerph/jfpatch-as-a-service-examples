@@ -66,9 +66,9 @@ Define Module
 End Module
 
 Pre
- LIBRARY "VersionBas":PROCinit_version
- module_version$=version_major$
- module_date$=version_date$
+ REMLIBRARY "VersionBas":PROCinit_version
+ REMmodule_version$=version_major$
+ REMmodule_date$=version_date$
 End Pre
 
 #Rem off
@@ -720,4 +720,4 @@ $`fscsd_right
 #Library "Strings",strlen.strcpy
 #Here Libraries
 #Post
-#Run <CODE>
+REM#Run <CODE>

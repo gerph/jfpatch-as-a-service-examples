@@ -1,7 +1,6 @@
-APP  : TaskKiller
-IN   : -
-OUT  : TaskKiller
-TYPE : Module
+IN   -
+OUT  TaskKiller
+TYPE Module
 
 { Source code for Task Killer!
 
@@ -68,7 +67,6 @@ Version 1.06 : 08 Apr 1995
 DEFINE MODULE
   Name     : TaskKiller
   Version  : 1.06
-  Date     : 08 Apr 1995
   Author   : Justin Fletcher
   Help     : TaskKiller
   Init     : initcode%

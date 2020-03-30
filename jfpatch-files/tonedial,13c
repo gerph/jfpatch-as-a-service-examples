@@ -140,9 +140,9 @@ $`table
 #Library "Strings",cmpstringi
 #Here Libraries
 #Post
-*Channelvoice 1 1
-*Channelvoice 2 0
-VOICES 1
+*|Channelvoice 1 1
+*|Channelvoice 2 0
+REMVOICES 1
 END
 DIM A% 256
 $A%="888"
