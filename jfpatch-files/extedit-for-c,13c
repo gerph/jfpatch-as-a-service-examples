@@ -245,7 +245,7 @@ $exit
 .`tempname
    EQUZA   "<Wimp$Scrap>"
 
-; Messages we /need/ to receive to work properly
+; Messages we /need/ to receive to work properly
 .`ee_msgs
    EQUD    2                             ; datasaveack (for returns)
    EQUD    3                             ; dataload (for sends)

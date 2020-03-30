@@ -80,15 +80,15 @@ $notshift
    BNE     $notopen
    MOV     r1,r5                         ; no, re-get pointer to block,
    REM     "Call second routine"
-   SWI     "Wimp_OpenWindow"             ; Œ open it as specifed,
+   SWI     "Wimp_OpenWindow"             ; - open it as specifed,
    REM     "Exitted second"
 ;    BL      Display
-   LDR     r4,[r5,#32]                   ; Œ read old offset 32
-   SWI     "Wimp_GetWindowState"         ; Œ get new location,
-   STR     r4,[r5,#32]                   ; Œ restore old offset 32
+   LDR     r4,[r5,#32]                   ; - read old offset 32
+   SWI     "Wimp_GetWindowState"         ; - get new location,
+   STR     r4,[r5,#32]                   ; - restore old offset 32
 ;    BL      Display
-   ORR     r1,r12,#1                     ; Œ set b0 to return just header,
-   SWI     "Wimp_GetWindowInfo"          ; Œ and get the info again
+   ORR     r1,r12,#1                     ; - set b0 to return just header,
+   SWI     "Wimp_GetWindowInfo"          ; - and get the info again
 $notopen
    ADD     r1,r12,#96                    ; add#96 as offset for outline blk
    STR     r2,[r1]                       ; store window handle
