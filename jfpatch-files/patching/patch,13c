@@ -1,0 +1,36 @@
+In    hello-world
+Out   Patched
+Type  Utility
+
+{
+    The hello-world utility is the same as the hello-world example.
+    We will patch it to change the message.
+}
+
+Pre
+    PRINT "Starting"
+    PRINT"--- Disassemble what we loaded"
+    REM Dump what we built
+    OSCLI("MemoryI " + STR$~MC% + " +" + STR$~max)
+End Pre
+
+@ &1F
+; Change who we say hello to
+    EQUZA   "there!"
+
+@ &14
+    B       newexit
+
+@ endofcode
+>newexit
+    SWI     "OS_WriteS"
+    EQUZA   "You bin patched, dude."
+    SWI     "OS_NewLine"
+    MOV     pc, link
+
+#Post
+PRINT"--- Disassemble the code we wrote"
+REM Dump what we built
+OSCLI("MemoryI " + STR$~MC% + " +" + STR$~max)
+PRINT"--- Now run it"
+#Run <CODE>

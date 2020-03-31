@@ -35,6 +35,7 @@ going to work on a 32bit system. Plus it probably does some ugly stuff as well.
 * `tonedial,13c` - Give it a phone number and it'll play the tones necessary to call it.
 * `serialtcp,13c` - Claims to be a way to replace the serial operations with a TCP connection. I have a recollection of playing something like Chocks Away with it, but honestly that could be my memory playing
 tricks on me. There's a very real possibility that I wrote it and never got it to work reliably.
+* `patching.zip` - A zip of the 'patching' directory which demonstrates patching a binary.
 
 
 ## Clients

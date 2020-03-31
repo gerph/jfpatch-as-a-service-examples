@@ -42,6 +42,10 @@
 
             {"name": "Serial over TCP module",
              "filename": "serialtcp,13c",
-             "description": "Claims to be a way to replace the serial operations with a TCP connection"}
+             "description": "Claims to be a way to replace the serial operations with a TCP connection"},
+
+            {"name": "Patching a utility",
+             "filename": "patching.zip",
+             "description": "Example that patches hello-world to say something else"}
         ]
 }
