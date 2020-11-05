@@ -62,15 +62,16 @@ Version 1.05 : 18 Mar 1995
 Version 1.06 : 08 Apr 1995
                Added code to set svc within call back code
                Now uses DelinkApplication to remove vectors
+Version 1.07 : 05 Nov 2020
+               Might be 32bit safe.
 }
 
 DEFINE MODULE
   Name     : TaskKiller
-  Version  : 1.06
+  Version  : 1.07
   Author   : Justin Fletcher
   Help     : TaskKiller
   Init     : initcode%
-  Service  : srvcode%
   Final    : finalcode%
   Commands
     Name   : TaskKiller
@@ -103,19 +104,14 @@ PRE
  k3=0  :REM Escape key
  k4=36 :REM Keypad *
  # COND INLINE
- # COND enablewimp Do you want to assemble the wimp command prompt window
- REM # COND SET enablewimp FALSE
+ REM # COND enablewimp Do you want to assemble the wimp command prompt window
+ # COND SET enablewimp FALSE
 END PRE
 
 .initcode%
     STMFD   (sp)!,{link}
     BL      doclaim
     LDMFD   (sp)!,{pc}
-:
-.srvcode%
-    MOV     pc,link     ; ie return immediately
-;    TEQ     R1,#&27    ; reset module
-;    MOVNE   pc,link
 :
 .doclaim
     STMFD   (sp)!,{R0-R2,link}
@@ -128,11 +124,15 @@ END PRE
     MOV     R0,#&10               ; vector &10 ?
     ADR     R1,newvector%         ; to be processed at newvector%
     BL      claimvector%
+    STRVS   r0, [sp]
     MOV     R0,#&0E
     MOV     R1,#&0B
     SWI     "XOS_Byte"            ; enable keypress vector
+    BVS     doclaim_failed
     MOV     R0,#0
     STRB    R0,[R12,#8]
+.doclaim_failed
+    STRVS   r0, [sp]
     LDMFD   (sp)!,{R0-R2,pc}
 
 .finalcode%
@@ -151,7 +151,7 @@ END PRE
     BL      releasevector%
     MOV     R2,#0
     SWI     "XOS_Claim"
-    LDMFD   (sp)!,{R2,pc}^
+    LDMFD   (sp)!,{R2,pc}
 
 .releasevector%
     STMFD   (sp)!,{R0-R2,link}
@@ -160,13 +160,13 @@ END PRE
     MOV     R2,#0
     SWI     "XOS_Release"
     BVC     retryrelease%
-    CMP     pc,#0
+    CMP     r0, r0                  ; clear V
     LDMFD   (sp)!,{R0-R2,pc}
 
 .newvector%
     CMP     R0,#&0B                ; is this a keypress ?
     MOVNE   pc,link                 ; if not exit
-    STMFD   (sp)!,{R0-r2,R4,R5,link} ; stack regs
+    STMFD   (sp)!,{R0-r2,R4,R5,R8,R9,link} ; stack regs
     MOV     r4,#0
     CMP     R2,#k1                 ; code for key 1 (controlling key)
     STREQ   R1,key1pressed
@@ -182,21 +182,18 @@ END PRE
     STREQ   R1,key4pressed
     MOVEQ   r4,#1
     CMP     r4,#1
-    LDMNEFD (sp)!,{R0-R2,R4,R5,pc}
+    LDMNEFD (sp)!,{R0-R2,R4,R5,R8,R9,pc}
 :
 .whichkeys%
     LDR     R2,key1pressed
     TEQ     R2,#0
-    LDMEQFD (sp)!,{R0-R2,R4,R5,pc}
+    LDMEQFD (sp)!,{R0-R2,R4,R5,R8,R9,pc}
     LDR     R2,key2pressed
     TEQ     R2,#0
     BEQ     testforkey3
     ADR     r1,doexitcode%         ; r1=address to jump to
 .setupjump
-    MOV     R5,pc
-    BIC     R4,R5,#1
-    TEQP    R4,#1
-    MOV     R0,R0
+    FNset_as_svc(pass%)
     STMFD   (sp)!,{link}
     LDRB    R0,doingnow
     TEQ     R0,#0
@@ -208,9 +205,8 @@ END PRE
     STRVCB  R0,doingnow          ; if ok then set doing
 .alreadydoing
     LDMFD   (sp)!,{link}
-    TEQP    R5,#0
-    MOV     R0,R0
-    LDMFD   (sp)!,{R0-R2,R4,R5,pc}
+    FNrestore_mode(pass%)
+    LDMFD   (sp)!,{R0-R2,R4,R5,R8,R9,pc}
 .testforkey3                     ; check that key 3 is pressed (Error)
     LDR     R2,key3pressed
     TEQ     R2,#0
@@ -221,7 +217,7 @@ END PRE
 .testforkey4                     ; check that key 4 is pressed (OSCLI)
     LDR     R2,key4pressed
     TEQ     R2,#0
-    LDMEQFD (sp)!,{R0-R2,R4,R5,pc}
+    LDMEQFD (sp)!,{R0-R2,R4,R5,R8,R9,pc}
     ADR     r1,doosclicode%
     B       setupjump
 :
@@ -244,9 +240,12 @@ END PRE
     MOV     R0,#0
     STRB    R0,doingnow
 ; code goes here -
-    ERR     "Program terminated"
+    ADR     r0, errmessage
+    SWI     "OS_GenerateError"
 ; - to here
     LDMFD   (sp)!,{pc}
+.errmessage
+    ERR     0, "Program terminated"
 :
 .delinkapplication
     STMFD   (sp)!,{r0-r12,link}
@@ -258,7 +257,7 @@ END PRE
     CMP     r1,#0                   ; was the buffer full ?
     BEQ     dla_loop                ; if it was, then go around again
     FNrestore_mode(pass%)
-    LDMFD   (sp)!,{r0-r12,pc}^
+    LDMFD   (sp)!,{r0-r12,pc}
 .buffer
     RES     32                      ; space for vector storage
 :
@@ -296,15 +295,15 @@ END PRE
     BVC     oscliloop           ; if no error then loop around
 .osclierror
     ADD     r0,r0,#4            ; skip error code byte
-    SWI     "OS_Write0"         ; write to screen
-    SWI     "OS_NewLine"
+    SWI     "XOS_Write0"         ; write to screen
+    SWI     "XOS_NewLine"
     B       oscliloop
 .exitoscli
     MOV     R0,#0
     STRB    R0,doingnow
 ; - to here
     FNrestore_mode(pass%)
-    LDMFD   (sp)!,{r0-r12,pc}^
+    LDMFD   (sp)!,{r0-r12,pc}
 :
 .wimprunning
 # COND OF enablewimp
@@ -323,10 +322,10 @@ END PRE
     FNset_as_svc(pass%)
     MOV     r0,#200
     MOV     r1,#0
-    SWI     "OS_Byte"            ; Clear Break/Escape disabled
+    SWI     "XOS_Byte"            ; Clear Break/Escape disabled
     MOV     r0,#229
     MOV     r1,#0
-    SWI     "OS_Byte"            ; Enable Escape
+    SWI     "XOS_Byte"            ; Enable Escape
     FNrestore_mode(pass%)
     LDMFD   (sp)!,{r8-r9,pc}
 :
@@ -354,16 +353,21 @@ message_buffer%?len=13
 :
 DEFFNset_as_svc(pass%)
 [OPT pass%
-     MOV     r9, pc          ; save current status/mode
-     ORR     r8, r9, #3      ; derive SVC-mode variation of it
-     TEQP    r8, #0          ; enter SVC mode
-     MOV     r0, r0          ; nop
-     MOV     r8, link        ; save r14_svc
+    MRS     r9, cpsr
+    BIC     r8, r8, #15
+    ORR     r8, r8, #3
+    MSR     cpsr_c, r8
+;    MOV     r9, pc          ; save current status/mode
+;    ORR     r8, r9, #3      ; derive SVC-mode variation of it
+;    TEQP    r8, #0          ; enter SVC mode
+;    MOV     r0, r0          ; nop
+    MOV     r8, link        ; save r14_svc
 ]:=pass%
 :
 DEFFNrestore_mode(pass%)
 [OPT pass%
-     MOV     link, r8        ; restore r14_svc
-     TEQP    r9, #0          ; re-enter original processor mode
-     MOVNV   r0, r0          ; nop
+    MOV     link, r8        ; restore r14_svc
+    MSR     cpsr_c, r9
+;     TEQP    r9, #0          ; re-enter original processor mode
+;     MOVNV   r0, r0          ; nop
 ]:=pass%

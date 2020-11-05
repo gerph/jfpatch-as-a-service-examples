@@ -122,7 +122,7 @@ $done
 
 >gbpbv
    CMP     r0,#5                         ; if it <5 ? (std gbpb calls)
-   MOVLTS  pc,link                       ; if so, return
+   MOVLT   pc,link                       ; if so, return
    B       replacevars                   ; otherwise, replace OS_GBPB
 
 >filev
@@ -136,10 +136,10 @@ $done
 ; *******************************************************************
 >wimp_closedown
    TEQ     r0,#0                         ; is it a 'real' closedown ?
-   MOVNES  pc,link                       ; return if not
+   MOVNE   pc,link                       ; return if not
    STMFD   (sp)!,{r0,link}               ; Stack registers
    XBL     swi_prefix,0                  ; unset the prefix if one
-   LDMFD   (sp)!,{r0,pc}^                ; Return from call
+   LDMFD   (sp)!,{r0,pc}                 ; Return from call
 
 ; *******************************************************************
 ; Subroutine:   swi_setclsize
@@ -195,13 +195,13 @@ $done
    REM     "Set CL '%$3'"
 
    LDMFD   (sp)!,{r0-r5,link}            ; restore regs
-   BICS    pc,link,#vbit                 ; return with V clear
 
 $notset
 $tooshort
+   MSR     CPSR_f, #vbit                 ; return with V set
    LDMFD   (sp)!,{r0-r5,link}            ; restore registers
    ADR     r0,$`error                    ; read error
-   ORRS    pc,link,#vbit                 ; return with V set
+   MOV     pc,link
 $`error
    EQUD    &20601
    EQUZA   "DDEUtils buffer not set or too short"
@@ -249,9 +249,10 @@ $done
    LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
 
 $notset
+   MSR     CPSR_f, #vbit                 ; return with V set
    LDMFD   (sp)!,{r0-r5,link}            ; restore registers
    ADR     r0,$`error                    ; read error
-   ORRS    pc,link,#vbit                 ; return with V set
+   MOV     pc,link
 $`error
    EQUD    &20601
    EQUZA   "DDEUtils buffer not set"
@@ -351,9 +352,10 @@ $deleteentry
    XSWI    "XWimp_SendMessage",17,r13    ; send message
    ADD     sp,sp,#20                     ; add it back on
    LDMVCFD (sp)!,{r0-r5,pc}              ; Return from call
+   MSR     CPSR_f, #vbit                 ; return with V set
    LDMFD   (sp)!,{r0-r5,link}            ; restore registers
    ADR     r0,$`error                    ; read error
-   ORRS    pc,link,#vbit                 ; return with V set
+   MOV     pc,link
 $`error
    EQUD    0
    EQUZA   "Throwback cannot be used outside the desktop"
@@ -465,7 +467,8 @@ $done
    LDRW    r2,`throwhand                 ; read the throwback handle
    XSWI    "XWimp_SendMessage",17,sp     ; send message
    ADD     sp,sp,#20                     ; add it back on
-   LDMFD   (sp)!,{r0-r5,pc}^             ; Return from call
+   MSR     CPSR_f, #0                    ; return with V clear
+   LDMFD   (sp)!,{r0-r5,pc}              ; Return from call
 
 ; *******************************************************************
 ; Subroutine:   com_prefixes
@@ -665,9 +668,10 @@ $gotblks ; temporary until we're got it working
 ; we drop to here on return
    NOP
    STMFD   (sp)!,{r0-r9,pc}              ; stack regs 0-8 and pc
-   MOV     r0,pc                         ; r0=pc
+   MRS     r0, cpsr                      ; r0=CPSR
+   STR     r0,[sp,#4*10]                 ; replace pc in the stacked registers
    REM     "Called on exit"
-   ADD     r5,sp,#4*11                   ; skip the registers we just stacked
+   ADD     r5,sp,#4*12                   ; skip the registers we just stacked
    LDMIA   r5,{r6,r7,r8,r9}              ; re-read the regs we hung on to
 ; r6-> csd var, r7-> csd, r8-> csfs, r9= 'special' marker
 ; first perform special functions
@@ -701,10 +705,8 @@ $notspecial
    REM     "Returning"
    LDMFD   (sp)!,{r0-r9,link}            ; restore registers
    ADD     sp,sp,#4*10                   ; add on the 9 regs to skip
-   TST     link,#vbit                    ; was v set
-   LDMFD   (sp)!,{link}                  ; re-read link
-   ORRNES  pc,link,#vbit                 ; if so, return with vset
-   BICEQS  pc,link,#vbit                 ; else, don't
+   MSR     cpsr_f, link                  ; restore the flags
+   LDMFD   (sp)!,{pc}                    ; claim
 
 $`thisdir
    EQUZA   "@"
