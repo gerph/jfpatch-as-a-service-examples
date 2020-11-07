@@ -1,0 +1,63 @@
+{
+    "examples": [
+            {"name": "JFPatch: Hello world",
+             "filename": "jfpatch-files/hello-world,13c",
+             "description": "Simple utility that prints 'Hello world'"},
+
+            {"name": "JFPatch: Base64 module",
+             "filename": "jfpatch-files/base64,13c",
+             "description": "Simple example module that decodes a Base64 encoded block"},
+
+            {"name": "JFPatch: Bat and Ball utility",
+             "filename": "jfpatch-files/batnball,13c",
+             "description": "Sub-256 byte utility to bounce a ball, and hit it with a bat"},
+
+            {"name": "JFPatch: DDEUtils module",
+             "filename": "jfpatch-files/ddeutils,13c",
+             "description": "My implementation of DDEUtils, which I wrote because otherwise you couldn't use throwback or prefixing without buying the Desktop Development Environment"},
+
+            {"name": "JFPatch: DJF player utility",
+             "filename": "jfpatch-files/djf,13c",
+             "description": "Tool for playing David's Jingle Format tunes"},
+
+            {"name": "JFPatch: External Edit tool",
+             "filename": "jfpatch-files/extedit,13c",
+             "description": "Command line tool that can launch an External Editor on a file from within a Taskwindow"},
+
+            {"name": "JFPatch: External Edit library for C",
+             "filename": "jfpatch-files/extedit-for-c,13c",
+             "description": "An AOF linkable version of the External Edit launcher (which was used in GMail)"},
+
+            {"name": "JFPatch: No Cover Iconbar module",
+             "filename": "jfpatch-files/nocoverib,13c",
+             "description": "Module to ensure that windows never cover the iconbar"},
+
+            {"name": "JFPatch: Task Killer module",
+             "filename": "jfpatch-files/taskkiller,13c",
+             "description": "Module to allow killing of tasks that wouldn't exit"},
+
+            {"name": "JFPatch: Tone Dial utility",
+             "filename": "jfpatch-files/tonedial,13c",
+             "description": "Give it a phone number and it'll play the tones necessary to call it"},
+
+            {"name": "JFPatch: Serial over TCP module",
+             "filename": "jfpatch-files/serialtcp,13c",
+             "description": "Claims to be a way to replace the serial operations with a TCP connection"},
+
+            {"name": "JFPatch: Patching a utility",
+             "filename": "jfpatch-files/patching.zip",
+             "description": "Example that patches hello-world to say something else"},
+
+            {"name": "BASIC: Commands and library",
+             "filename": "misc-examples/basic-help-commands,fd1",
+             "description": "List the commands and library"},
+
+            {"name": "C: Hello World",
+             "filename": "c-examples/hello-world.c",
+             "description": "Simple application that prints 'Hello world'"},
+
+            {"name": "C: Demo example",
+             "filename": "c-examples/simple-module.zip",
+             "description": "Simple module with a test command"}
+        ]
+}

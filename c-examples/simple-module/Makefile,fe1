@@ -1,0 +1,65 @@
+# Build a module
+
+COMPONENT = MyModule
+
+APCS = -apcs 3/32
+CMHGFLAGS = ${APCS}
+CCFLAGS = ${APCS} -c -I${INCS}
+LINKFLAGS = -rmf ${LIBS}
+
+ifdef __linux
+CC = riscos-cc
+CMHG = riscos-cmunge
+LINK = riscos-link
+MKDIR = riscos-cdir
+DESTROY = riscos-destroy
+else
+CC = cc
+CMHG = cmunge
+LINK = link
+MKDIR = cdir
+DESTROY = destroy
+endif
+
+# Our objects and libraries
+OBJS = o.modhead \
+       o.module
+LIBS = C:o.stubsG
+INCS = C:
+
+# From c files, we can make o files.
+.c.o:
+    ${CC} ${CCFLAGS} -o $@ $<
+
+# From cmhg files, we can make o files
+.cmhg.o:
+    ${CMHG} ${CMHGFLAGS} -o $@ $<
+
+# ... and we know how to make headers
+.cmhg.h:
+    ${CMHG} ${CMHGFLAGS} -d $@ $<
+
+all: rm.${COMPONENT}
+
+clean:
+	-${DESTROY} ${OBJS} rm.${COMPONENT} h.modhead rm o h
+
+test: rm.${COMPONENT}
+	@echo ---- Module was built ----
+ifdef __linux
+else
+	rmload rm.${COMPONENT}
+	*TestCommand HELLO!
+	@echo ---- Tests complete ----
+endif
+
+.INIT:
+    ${MKDIR} o
+    ${MKDIR} h
+    ${MKDIR} rm
+
+rm.${COMPONENT}: ${OBJS}
+    ${LINK} ${LINKFLAGS} -o $@ ${OBJS}
+
+# Static dependencies
+o.module: h.modhead

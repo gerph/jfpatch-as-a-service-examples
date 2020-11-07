@@ -1,0 +1,30 @@
+/* Simple module */
+
+#include <stdio.h>
+
+#include "modhead.h"
+
+_kernel_oserror *Mod_Init(const char *tail, int podule_base, void *pw)
+{
+    printf("Module is initialising!\n");
+    return NULL;
+}
+
+
+_kernel_oserror *Mod_Command(const char *arg_string, int argc, int number,
+                             void *pw)
+{
+    switch (number)
+    {
+        case CMD_TestCommand:
+            printf("You gave me: %s\n", arg_string);
+            break;
+    }
+    return NULL;
+}
+
+_kernel_oserror *SWI_Test(int number, _kernel_swi_regs *r, void *pw)
+{
+    printf("You called one of my SWIs. Lovely\n");
+    return NULL;
+}

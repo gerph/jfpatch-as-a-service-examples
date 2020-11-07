@@ -1,26 +1,23 @@
-# JFPatch as a service examples
+# RISC OS Build server examples
+
+(incorporates JFPatch as a service examples)
 
 ## Introduction
 
-This repository contains some examples of how the JFPatch tool works, and an example
-command line tool to use it. The JFPatch service, at https://jfpatch.riscos.online/,
+This repository contains some examples of how the RISC OS build service works, and an example
+command line tool to use it. The RISC OS Build Service, at https://build.riscos.online/ (and https://jfpatch.riscos.online),
 provides a JSON API and a WebSockets API to perform builds.
 
 ## Documentation
 
-The API documentation can be found at https://jfpatch.riscos.online/api.html.
+The API documentation can be found at https://build.riscos.online/api.html.
 
-The JFPatch file format documentation cen be found at https://jfpatch.riscos.online/fileformat.html.
+The JFPatch file format documentation cen be found at https://build.riscos.online/fileformat.html.
 
-## Example code (jfpatch-files)
+## JFPatch example code (jfpatch-files)
 
 Within this repository there are some example JFPatch files which give examples of how the format works
 in the form of commands and tools that I wrote some 20 years ago or so. The file type number for JFPatch files is &13C, so all files will have this trailing suffix.
-
-Note: At the current time, the JFPatch tool doesn't actually generate 32bit code, and some of this code
-won't be 32bit safe. I just haven't got around to that, what with trying to implement the service and
-the general anxiety over doing anything publically and the end of the world. I hope that I'll get the
-back end JFPatch updated to create 32bit modules at some point soon.
 
 * `hello-world,13c` - A simple 'hello world' utility.
 * `base64,13c` - A simple example module that decodes a Base64 encoded block.
@@ -37,6 +34,13 @@ going to work on a 32bit system. Plus it probably does some ugly stuff as well.
 tricks on me. There's a very real possibility that I wrote it and never got it to work reliably.
 * `patching.zip` - A zip of the 'patching' directory which demonstrates patching a binary.
 
+
+## Miscellaneous example code (misc-examples)
+
+There are some random examples included here which show the system might be used in other
+ways.
+
+* `basic-help-commands,fd1` - a BASIC program which lists the commands available to the service.
 
 ## Clients
 
@@ -111,3 +115,8 @@ complete: True
 
 The tool writes the built binary to the current directory as `built,xxx` unless the `--output-base` option
 is supplied (which builds the prefix before the `,xxx` which is always appended).
+
+## ROBuild-Client
+
+A more advanced WebSockets build client is available in
+the [robuild-client repository](https://github.com/gerph/robuild-client).

@@ -1,0 +1,6 @@
+REM >HelpCommands
+PRINT "--- *Commands ---"
+*Help Commands
+
+PRINT "--- Library commands ---"
+*LCat
